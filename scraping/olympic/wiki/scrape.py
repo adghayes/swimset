@@ -42,8 +42,9 @@ def scrape_table (table):
 
     return table_data
 
-def scrape_wikitables (page):
+def scrape_results_page (content):
+    soup = BeautifulSoup(content)
     wikitables_data = []
-    for wikitable in page.find_all(class_ = "wikitable"):
+    for wikitable in soup.find_all(class_ = "wikitable"):
         wikitables_data.append(scrape_table(wikitable))
-    return wikitables_data
+    return {'tables': wikitables_data}
