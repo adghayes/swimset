@@ -38,6 +38,7 @@ convert_month <- function(month_str){
 
 # loads raw data from JSON
 fina_raw <- fromJSON("./finacrawler/finadata.json", flatten = FALSE)
+save(fina_raw, file = "./finaraw.rda")
 
 # store and work with separate table. Each record is an event, heats and results are nested
 fina_events <- fina_raw
@@ -131,15 +132,9 @@ fina_results <- fina_results %>% mutate(time = str_remove(time, "[*\\s]")) %>%
   ) %>%
   rowid_to_column(var = "result_id")
 
-
-within_heat_dupes <- fina_results %>% 
-  group_by(event_id, first_name, family_name, str_time, ioc_code, phase_id) %>%
-  filter(n() > 1) %>% top_n(n = -(n() - 1), wt = desc(phase_size)) %>% 
-  ungroup() %>% add_column(dupe_prob = c(.9)) %>% select(result_id, dupe_prob)
-
-
+# ----------------------- Duplicate Result Identification ---------------------
 # Identify results likely to be duplicates of other results in a smaller heat. 
-# Mean of result duplicate indicator becomes likelihood heat is a duplicat
+# Mean of result duplicate indicator becomes likelihood heat is a duplicate
 ind_dup <- fina_results %>% filter(!relay) %>% 
   group_by(event_id, first_name, family_name, ioc_code, str_time) %>%
   filter(n() > 1) %>% top_n(n = (n() - 1), wt = phase_size) %>% 
@@ -150,19 +145,18 @@ rel_dup <- fina_results %>% filter(relay) %>%
   filter(n() > 1) %>% top_n(n = (n() - 1), wt = phase_size) %>% 
   ungroup() %>% add_column(dup = c(1)) %>% select(result_id, dup)
 
-all_dup <- ind_dup %>% union_all(rel_dup)
-
-phase_dup <- fina_results %>% left_join(all_dup, by = "result_id") %>% 
+dup_threshold <- .8
+phase_dup <- fina_results %>% left_join(union_all(rel_dup,ind_dup), by = "result_id") %>% 
   mutate(dup = if_else(is.na(dup), 0, dup)) %>%
-  group_by(event_id, phase_id, phase_size) %>% 
-  summarize(dup = mean(dup)) %>% mutate(likely_dup = (dup > .5))
+  group_by(event_id, phase_id, phase_size, phase_label, relay) %>% 
+  summarize(dup = mean(dup)) %>% mutate(likely_dup = (dup > dup_threshold))
 
-# CDF to visualize how distribution of dulicate likelihoods
+# CDF to visualize the distribution of duplicate likelihoods
 phase_dup %>% ggplot(aes(dup, weight = phase_size)) + stat_ecdf()
 
 # Separate likely duplicates and unlikely duplicates by heat size (y-scaled)
 phase_dup %>% ggplot(aes(phase_size, color = likely_dup, fill = likely_dup)) + 
   geom_density(position = "stack") + scale_y_sqrt()
 
-fina_results %>% left_join(all_dup, by = "result_id") %>% 
-  mutate(dup = if_else(is.na(dup), 0, dup)) %>% select(phase_id, phase_size, dup)
+# Remove from results those identified as duplicates over some threshold of probability
+fina_results <- fina_results %>% anti_join(filter(phase_dup, dup > dup_threshold), by = "phase_id")
