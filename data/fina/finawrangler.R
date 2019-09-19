@@ -36,14 +36,14 @@ convert_month <- function(month_str){
   )
 }
 
-# loads raw data from JSON
-fina_raw <- fromJSON("./finacrawler/finadata.json", flatten = FALSE)
-save(fina_raw, file = "./finaraw.rda")
+# ---------------------------- Raw Data--------------------------------
+raw <- fromJSON("./finacrawler/finadata.json", flatten = FALSE)
+save(raw, file = "./raw.rda")
 
-# store and work with separate table. Each record is an event, heats and results are nested
-fina_events <- fina_raw
-colnames(fina_events) <- str_replace_all(colnames(fina_events), "-", "_")
-fina_events <- fina_events %>% 
+# ---------------------------- Event Metadata -------------------------
+ws <- raw  # operations occur on a working set (ws) 
+colnames(ws) <- str_replace_all(colnames(ws), "-", "_")
+ws <- ws %>% 
   mutate(
     start_month = convert_month(start_month),
     end_month = suppressWarnings(convert_month(end_month)),
@@ -55,7 +55,7 @@ fina_events <- fina_events %>%
   ) %>% select(-url)
 
 # provide classification and pool size for different events
-fina_events <- fina_events %>% 
+ws <- ws %>% 
   mutate(
     series = as.factor(case_when(
       str_detect(competition, "\\d.. FINA World Championships \\d{4}") ~ "Championships (50m)",
@@ -76,24 +76,27 @@ fina_events <- fina_events %>%
 
 # extract event info (stroke, distance, gender) from event title
 event_regex = "(Women|Men|Mixed)\\s(4x|)(\\d+)m\\s([a-zA-Z]+)(\\sRelay|)"
-fina_events <- fina_events %>%
+ws <- ws %>%
   extract(event_title, c("gender","legs","distance","style","relay"), event_regex) %>%
   mutate(
     relay = (relay != ""),
     gender = as.factor(gender),
-    distance = as.integer(distance),
+    distance = if_else(relay, 4L*as.integer(distance), as.integer(distance)),
     style = as.factor(style)
   ) %>%
   select(-legs)
 
-# unnest heats
-fina_heats <- fina_events %>% unnest(phases)
-colnames(fina_heats) <- str_replace_all(colnames(fina_heats), "-", "_")
-fina_heats <- fina_heats %>% 
-  extract(phase_date, into = c("heat_day","heat_month"), regex = "(\\d+)\\s([:alpha:]+)") %>%
+events <- ws %>% select(-phases)
+save(events, file = "./events.rda")
+
+# --------------------------- Heat Metadata ---------------------------
+ws <- ws %>% unnest(phases)
+colnames(ws) <- str_replace_all(colnames(ws), "-", "_")
+ws <- ws %>% 
+  extract(phase_date, into = c("phase_day","phase_month"), regex = "(\\d+)\\s([:alpha:]+)") %>%
   mutate(
-    phase_day = as.integer(heat_day),
-    phase_month = convert_month(heat_month), 
+    phase_day = as.integer(phase_day),
+    phase_month = convert_month(phase_month), 
     phase_size = sapply(results, nrow)
   ) %>%
   rename(
@@ -103,7 +106,7 @@ fina_heats <- fina_heats %>%
   rowid_to_column(var = "phase_id") # need a unique identifier for each heat
 
 # Try to determine which heat we're in 
-fina_heats <- fina_heats %>% 
+ws <- ws %>% 
   mutate(
     phase_type = as.factor(case_when(
       str_detect(str_to_lower(phase_label), "swim.off") ~ "Swim Off",
@@ -113,12 +116,17 @@ fina_heats <- fina_heats %>%
       TRUE ~ "Unknown"
     ))
   )
-  
-fina_results <- fina_heats %>% unnest(results)
-colnames(fina_results) <- str_replace_all(colnames(fina_results), "-", "_")
+
+phases <- ws %>% select(event_id, phase_id, phase_label, phase_html_id,
+                        phase_day, phase_month, phase_size, phase_type)
+save(phases, file = "./phases.rda")
+
+# -------------------------- Result Data -----------------------
+ws <- ws %>% unnest(results)
+colnames(ws) <- str_replace_all(colnames(ws), "-", "_")
 time_regex = "(\\d+:)*\\d+\\.\\d+"
 nontimes <- c("DNS","DNF","DSQ", "?")
-fina_results <- fina_results %>% mutate(time = str_remove(time, "[*\\s]")) %>%
+ws <- ws %>% mutate(time = str_remove(time, "[*\\s]")) %>%
   mutate(
     status = as.factor(
       case_when(
@@ -133,20 +141,20 @@ fina_results <- fina_results %>% mutate(time = str_remove(time, "[*\\s]")) %>%
   rowid_to_column(var = "result_id")
 
 # ----------------------- Duplicate Result Identification ---------------------
-# Identify results likely to be duplicates of other results in a smaller heat. 
-# Mean of result duplicate indicator becomes likelihood heat is a duplicate
-ind_dup <- fina_results %>% filter(!relay) %>% 
+# Identify results likely to be duplicates of other results in a smaller phase. 
+# Mean of result duplicate indicator becomes likelihood phase is a duplicate
+ind_dup <- ws %>% filter(!relay) %>% 
   group_by(event_id, first_name, family_name, ioc_code, str_time) %>%
   filter(n() > 1) %>% top_n(n = (n() - 1), wt = phase_size) %>% 
   ungroup() %>% add_column(dup = c(1)) %>% select(result_id, dup)
 
-rel_dup <- fina_results %>% filter(relay) %>%
+rel_dup <- ws %>% filter(relay) %>%
   group_by(event_id, str_time, ioc_code) %>% 
   filter(n() > 1) %>% top_n(n = (n() - 1), wt = phase_size) %>% 
   ungroup() %>% add_column(dup = c(1)) %>% select(result_id, dup)
 
 dup_threshold <- .8
-phase_dup <- fina_results %>% left_join(union_all(rel_dup,ind_dup), by = "result_id") %>% 
+phase_dup <- ws %>% left_join(union_all(rel_dup,ind_dup), by = "result_id") %>% 
   mutate(dup = if_else(is.na(dup), 0, dup)) %>%
   group_by(event_id, phase_id, phase_size, phase_label, relay) %>% 
   summarize(dup = mean(dup)) %>% mutate(likely_dup = (dup > dup_threshold))
@@ -159,4 +167,56 @@ phase_dup %>% ggplot(aes(phase_size, color = likely_dup, fill = likely_dup)) +
   geom_density(position = "stack") + scale_y_sqrt()
 
 # Remove from results those identified as duplicates over some threshold of probability
-fina_results <- fina_results %>% anti_join(filter(phase_dup, dup > dup_threshold), by = "phase_id")
+ws <- ws %>% anti_join(filter(phase_dup, dup > dup_threshold), by = "phase_id")
+
+results <- ws %>% select(result_id, phase_id, event_id, rank, heat_rank, ioc_code, time, time_behind,
+                         record_type, family_name, first_name, rt, points, status, str_time)
+save(results, file = "./results.rda")
+
+# ------------------------------- Normalize Split Data -----------------------------
+remove_na <- function(s){
+  return(s[!is.na(s)])
+}
+
+complete_splits <- function (splits, time, distance, result_id){
+  if(!is.na(time)){
+    if((sum(splits) < time) && ((distance/(length(splits) + 1)) == 50)){
+      return(append(splits, time - sum(splits)))
+    }
+    else{
+      return(splits)
+    }
+  }
+}
+
+splits <- ws %>% select(distance, splits, time, result_id) %>% 
+  mutate (
+    splits = lapply(splits, remove_na),
+    splits = lapply(splits, convert_time)
+  ) %>%
+  filter(lapply(splits, length) > 0 & !is.na(time)) %>%
+  mutate (
+    splits = pmap(., complete_splits),
+    split_count = sapply(splits, length), 
+    split_sum = sapply(splits, sum),
+    split_distance = distance/split_count
+  ) %>%
+  filter(abs(split_sum - time) < time*.01)  %>%
+  select(result_id, splits, split_distance) %>%
+  filter(split_distance %in% c(50,100)) %>%
+  unnest(splits) %>% 
+  rename(split = splits) %>%
+  group_by(result_id) %>%
+  mutate(leg = row_number()) %>%
+  ungroup() 
+save(splits, file = "./splits.rda")
+
+# ----------------------------------- Normalize Relay Member Data -----------------------------------------
+relay_members <- ws %>% 
+  filter(!sapply(members, is.null)) %>%
+  select(result_id, members) %>%
+  unnest(members)  %>%
+  group_by(result_id) %>%
+  mutate(order = row_number()) %>%
+  ungroup() 
+save(relay_members, file = "./relay_members.rda")
