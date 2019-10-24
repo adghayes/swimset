@@ -44,8 +44,8 @@ convert_month <- function(month_str){
 # ---------------------------- Raw Data--------------------------------
 this.dir <- dirname(parent.frame(2)$ofile)
 setwd(this.dir)
-raw <- fromJSON("./finacrawler/fina.json", flatten = FALSE)
-save(raw, file = "./raw.rda")
+raw <- fromJSON("data/fina.json", flatten = FALSE)
+save(raw, file = "data/raw.rda")
 
 # ---------------------------- Event Metadata -------------------------
 ws <- raw  # all operations occur on a working set (ws) 
@@ -77,7 +77,7 @@ ws <- ws %>%
     ) %>% as.factor(),
     pool = case_when(
       series == "Championships (25m)"  ~ "25m",
-      series == "World Cup"  ~ "25m",
+      series == "World Cup" & !(year %in% seq(2015, 2115, 4))  ~ "25m",
       TRUE ~ "50m"
     ) %>% as.factor())
 
@@ -140,13 +140,17 @@ ws <- ws %>%
         TRUE ~ "OTHER"
       ) %>% as.factor(),
     str_time = time,
-    time = convert_time(time)
+    time = convert_time(time),
+    heat_rank = suppressWarnings(as.integer(heat_rank)),
+    rank = suppressWarnings(as.integer(rank))
   ) %>%
   rowid_to_column(var = "result_id")
 
 # ----------------------- Duplicate Result Identification ---------------------
 # Identify results likely to be duplicates of other results in a smaller phase. 
 # Mean of result duplicate indicator becomes likelihood phase is a duplicate
+
+# duplicate individual results
 ind_dup <- ws %>% 
   filter(!relay) %>% 
   group_by(event_id, first_name, family_name, ioc_code, str_time) %>%
@@ -156,6 +160,7 @@ ind_dup <- ws %>%
   add_column(dup = c(1)) %>% 
   select(result_id, dup)
 
+# duplicate relay results
 rel_dup <- ws %>% 
   filter(relay) %>%
   group_by(event_id, str_time, ioc_code) %>% 
@@ -165,6 +170,7 @@ rel_dup <- ws %>%
   add_column(dup = c(1)) %>% 
   select(result_id, dup)
 
+# calculate heat duplicate proportions
 phase_dup <- ws %>% 
   left_join(union_all(rel_dup,ind_dup), by = "result_id") %>% 
   mutate(dup = if_else(is.na(dup), 0, dup)) %>%
@@ -172,25 +178,45 @@ phase_dup <- ws %>%
   summarize(dup = mean(dup)) %>% 
   select(phase_id, dup)
 
+# add proportions to phases data frame
 phases <- phases %>% 
   left_join(phase_dup, by = "phase_id") %>%
   mutate(dup = if_else(is.na(dup), 0, dup))
-
 rm(ind_dup, rel_dup, phase_dup)
-dup_threshold <- .5
 
 # Remove from results those identified as duplicates over some threshold of probability
-
+dup_threshold <- .5
 ws <- ws %>% anti_join(filter(phases, dup > dup_threshold), by = "phase_id")
-
-results <- ws %>% select(result_id, phase_id, event_id, rank, heat_rank, ioc_code, time, time_behind,
+results <- ws %>% select(result_id, phase_id, rank, heat_rank, ioc_code, time, time_behind,
                          record_type, family_name, first_name, rt, points, status, str_time)
+
+# ------------------------------- Identifying Summary Heats -------------------------
+# Use properties of heats - size, number of heats - to guess whether
+# it is a summary heat or not. 
+
+phase_is_summary <- ws %>%
+  group_by(event_id, phase_id, phase_type) %>%
+  summarise(
+    n_r = n()
+  ) %>%
+  group_by(event_id, phase_type) %>%
+  mutate(n_h = n()) %>%
+  ungroup() %>%
+  mutate(
+    is_summary = n_h == 1 & n_r > 10
+  ) %>%
+  select(phase_id, is_summary)
+
+phases <- phases %>% 
+  left_join(phase_is_summary, by = "phase_id") %>%
+  mutate(is_summary = if_else(is.na(is_summary), TRUE, is_summary))
 
 # ------------------------------- Normalize Split Data -----------------------------
 remove_na <- function(s){
   return(s[!is.na(s)])
 }
 
+# For splits that seem to be missing a last 50, interpolate value
 complete_splits <- function (splits, time, distance, result_id){
   if(!is.na(time)){
     if((sum(splits) < (time - 1)) && ((distance/(length(splits) + 1)) == 50)){
@@ -202,6 +228,7 @@ complete_splits <- function (splits, time, distance, result_id){
   }
 }
 
+# splits will exist as side table to results, to be joined with
 splits <- ws %>% select(distance, splits, time, result_id) %>% 
   mutate (
     splits = lapply(splits, remove_na),
@@ -210,17 +237,16 @@ splits <- ws %>% select(distance, splits, time, result_id) %>%
   filter(lapply(splits, length) > 0 & !is.na(time)) %>%
   mutate (
     splits = pmap(., complete_splits),
-    split_count = sapply(splits, length), 
     split_sum = sapply(splits, sum),
-    split_distance = distance/split_count
+    split_distance = distance/sapply(splits, length)
   ) %>%
-  filter(abs(split_sum - time) < time*.01)  %>%
+  filter(abs(split_sum - time) < time*.01)  %>% # keeps only splits that match time
+  filter(split_distance %in% c(50,100)) %>% # and where split distance is 50 or 100
   select(result_id, splits, split_distance) %>%
-  filter(split_distance %in% c(50,100)) %>%
   unnest(splits) %>% 
   rename(split = splits) %>%
   group_by(result_id) %>%
-  mutate(leg = row_number()) %>%
+  mutate(leg = row_number()) %>% # add a leg number e.g. 1st 50, 2nd 50, etc.
   ungroup() 
 
 
@@ -236,39 +262,47 @@ relay_members <- ws %>%
 
 
 # ---------------------------------- Attempt to ID Athletes ---------------------------
-# collect names from relays as well
-relay_legs <- results %>% 
-  left_join(events, by = "event_id") %>%
+# collect names from relays
+relay_legs <- ws %>%
   filter(relay) %>% 
-  select(year, ioc_code, result_id) %>%
+  select(year, ioc_code, result_id, series) %>%
   inner_join(relay_members, by = "result_id") %>%
-  select(first_name, family_name, ioc_code, year)
+  select(first_name, family_name, ioc_code, year, series)
   
 # Collect some features of "careers," or races by people of the same name
 careers <- ws %>% 
   filter(!relay) %>%
-  select(first_name, family_name, ioc_code, year) %>%
-  union_all( relay_legs) %>%
+  select(first_name, family_name, ioc_code, year, series) %>%
+  union_all(relay_legs) %>% 
   group_by(first_name, family_name) %>%
   arrange(year) %>%
   mutate(
     year_gaps = c(0, diff(year))
   ) %>%
   summarize(
+    n = n(),
     first_year = min(year),
     last_year = max(year),
-    longest_gap = max(year_gaps),
-    which_gap = which.max(year_gaps),
     year_range = last_year - first_year,
-    year_sd = sd(year)
+    longest_gap = max(year_gaps),
+    end_gap =  if(length(year) > 1) {year[which.max(year_gaps)]} else {0},
+    start_gap = end_gap - longest_gap,
+    countries = length(unique(ioc_code[ioc_code != "CLB"]))
   ) %>% 
   arrange(desc(longest_gap))
 
-# No good way to ID swimmers with the limited data accessible. Better to use a pre-id'd source.
+# No good way to ID swimmers with the limited data accessible 
 
+# ---------------------------------- Utility Functions -----------------------------------------------
+
+fina_join <- function(){
+  results %>%
+    left_join(phases, by = "phase_id") %>%
+    left_join(events, by = "event_id")
+}
 
 # ------------------------------------ Save to file --------------------------------------------------
 this.dir <- dirname(parent.frame(2)$ofile)
 setwd(this.dir)
-save(events, phases, results, splits, relay_members, file = "./fina.rda")
+save(events, phases, results, splits, relay_members, careers, fina_join, file = "./data/fina.rda")
 
