@@ -100,7 +100,7 @@ The main limitation of the FINA dataset is that athletes are not uniquely ID'd. 
 
 Attempting to differentiate swimmers, especially without a test set, would be very difficult to do with accuracy. For the current project, I opted to not try to ID athletes, and continue with the knowledge that name-based identification is very flawed with the FINA data.
 
-## Exploratory Data Analysis
+## The Dataset
 
 What data has FINA made available to us, and what is it's quality? Each competition was classified into one of eight series:
 
@@ -148,85 +148,166 @@ Not every result is usable for an analysis of times or performance because some 
 - OTHER = does not fit into another category
 - DNF = did not finish
 
-```{r, include = FALSE}
-cs_distance <- 1500
-cs_style <- "Freestyle"
-```
-## Split Case Study: `r cs_distance`m `r cs_style`
+## Split Case Study: 400m Freestyle
 
-### Data Overview
-The split data gives a greatly enriched picture of a race. Here, I dig into the split data for the `r cs_distance`m `r cs_style` but this case study is largely parameterized and could be reproduced for another distance and style.
+### Exploratory Data Analysis
+The split data gives a greatly enriched picture of a race. Here, I take a deeper look at the split data for the 400m Freestlye and how the splits are predictive of one another.
 
-To start, let's visualize the distribution of splits by race leg. Some invalid data point outliers are removed to make the plots more readable (the invalid data is a result of mixing adjacent splits e.g. 20 and 40 second splits rather than 30 and 30).
+To start, let's visualize the distribution of splits by race leg:
 
 ```{r, dpi = 200}
+cs_style <- "Freestyle"
+cs_distance <- 400
 cs_splits <- splits %>% 
   inner_join(ws, by = "result_id") %>% 
-  filter(distance == cs_distance, style == cs_style, split_distance == 50) 
+  filter(distance == cs_distance, style == cs_style, split_distance == 50, !relay) 
   
 cs_splits %>% 
   ggplot(aes(leg, split, group = leg)) + 
   geom_point(alpha = .05) + 
   geom_boxplot(outlier.shape = NA) + 
-  facet_grid(. ~ gender) +
-  theme
+  theme + 
+  labs(x = "Length", y = "Split (s)")
 ```
 
-Some trends are immediately apparent from the `r length(unique(cs_splits$result_id))` races above. Of all the race legs, the first is the fastest and the last is the second fastest, on average. Throughout the race, split times are mostly non-decreasing until the second-to-last 50, which is slightly faster than the third-to-last, and the last 50, which is much faster than the second-to-last. Above it is difficult to differentiate variation due to *overall* time and split variation, so we can recreate the plot with proportions rather than actual times, and compare each leg to the race average:
+Some trends are immediately apparent from the `r length(unique(cs_splits$result_id))` races above. Of all the race legs, the first is the fastest and the second and last are also faster than the median. Throughout the race, split times are mostly non-decreasing until the last 50, which is slightly faster than the second-to-last. The variation above is slightly exagerated because it includes Men and Women together, and 25m and 50m pools together. When accounting for these features of a race we notice much less variation:
 
 ```{r, dpi = 200}
 cs_splits %>% 
+  ggplot(aes(leg, split, group = leg)) + 
+  geom_point(alpha = .05) + 
+  geom_boxplot(outlier.shape = NA) + 
+  facet_grid(pool ~ gender) +
+  theme + 
+  labs(x = "Length", y = "Split (s)")
+```
+
+Above it is still difficult to differentiate variation due to *overall* time and split variation. For example, maybe everybody paces in the same way but person A's splits are consistently 2% faster than person B. Recreating the plot with proportions of the final time, rather than actual times, allows us to better visualize variation in how the race is paced.
+
+```{r, dpi = 200}
+cs_ratios <- cs_splits %>% 
   filter(split > 25, split < 50) %>%
-  mutate(ratio = split/time) %>%
+  mutate(ratio = split/time) 
+
+cs_var <- cs_ratios %>%
+  group_by(leg) %>%
+  summarize(s = sd(ratio))
+
+p <- cs_ratios %>%
   ggplot(aes(leg, ratio, group = leg)) + 
   geom_point(alpha = .05) + 
   geom_boxplot(outlier.shape = NA) + 
-  geom_hline(yintercept = 1/30) +
-  facet_grid(. ~ gender) +
-  theme
+  geom_hline(yintercept = 1/8, linetype = "dotted") +
+  theme + 
+  labs(x = "Length", y = "Ratio of Overall Time")
+
+p + 
+  geom_line(data = cs_var, mapping = 
+              aes(x = leg, y = s*50, group = "SD"), color = "blue") +
+  geom_point(data = cs_var, mapping = 
+              aes(x = leg, y = s*50, group = "SD"), color = "blue")
 ```
 
-In addition to having less noise, in this plot we can now meaningfully compare across genders. We can note, for example, that men seem to speed up more in the final 100 than women relative to the rest of the race.
+In the plot above, the dotted horizontal line represents the average split of a race and the blue line is the scaled (x50), standard deviation of each length. It seems the middle four lengths are particularly stable, but swimmers vary more than double in the first and final lengths. Are some swimmers more weighted toward the front, and others toward the end? What are the relationships between each lap? The correlation matrix provides some insight into how the split ratios are related, using the package *corrplot*:
 
-### Final Time Prediction
+```{r, dpi = 200}
+cs_matrix <- cs_ratios %>% 
+  select(ratio, leg, result_id) %>%
+  pivot_wider(names_from = leg, values_from = ratio, names_prefix = "Leg ") %>%
+  column_to_rownames(var = "result_id")
 
-Imagine watching the 1500m in the Olympics: after 200m, do we think we can predict final times? After 500m? Swimmers vary in how they approach a long distance event, but hopefully the ratios between early splits give us a sense of how the swimmer's time is trending. To start, let's build a simple linear model that, at leg x, tries to predict the final time based on the time so far. We will split our data into training and test sets.
+cs_cor <- cor(cs_matrix)
+
+library(corrplot)
+corrplot(cs_cor, type = "upper", tl.col = "black", 
+         tl.srt = 45)
+```
+
+The overall trend of the plot is that legs close together are positively correlated and legs further apart are negatively correlated. We already knew this from the previous plot because, since the standard deviation of the middle four lengths is small, deviations from the eventual split average early in the race need to be compensated for at the end of the race. The interesting part about the correlations is that it is not a completely uniform trend. If it were, we would expect the first and last split to be the most negatively correlated but this is not the case - it is the second and second-to-last splits which are most negatively correlated. It seems that the final length is more resilient. Going out very fast (relative to your eventual time) in the initial 100 is normally reflected in slowneww between the 250 and 350 mark.
+
+### Final Time Prediction: Women's Long Course 400m Freestyle
+
+```{r}
+cs_obs <- cs_splits %>%
+  filter(gender == "Women", pool == "50m") %>%
+  select(result_id, leg, time, split) %>%
+  pivot_wider(names_from = leg, values_from = split, names_prefix = "leg")
+```
+
+How predictive of final time are a race's initial splits? If we see initial splits, how closely can we predict the final time? Because of the variations due to pool type in gender, this study is further limited to only Women's Long Course 400m Freestyle. With one, two, or four splits, how well can regression and other ML techniques predict the final time? I divide the dataset containing `r n_all` into a training set with 80% of the races and a test set with the other 20%. Our baseline model is just predicting final times in the test set as the average of final times in the train set - our model if we had no splits available and were using no other features. For a measure of accuery I use RMSE:
 
 ```{r}
 library(caret)
-cs_result_ids <- unique(cs_splits$result_id)
-train_index <- createDataPartition(cs_result_ids, times = 1, p = .8, list = FALSE)
-train_result_ids <- cs_result_ids[train_index]
-train_splits <- cs_splits %>% filter(result_id %in% train_result_ids)
-test_splits <- cs_splits %>% filter(!(result_id %in% train_result_ids))
+set.seed(1)
+train_index <- createDataPartition(cs_obs$time, p = .8, list = FALSE)
+cs_train <- cs_obs[train_index,]
+cs_test <- cs_obs[-train_index,]
 
-n_l <- seq(1,30,1)
-simple_lm_rmse <- sapply(n_l, function(n){
-  train_splits_n <- train_splits %>% 
-    select(result_id, time, leg, split) %>%
-    filter(leg <= n) %>%
-    group_by(result_id) %>%
-    mutate(time_n = sum(split)) %>%
-    ungroup()
-  m <- lm(time ~ time_n, train_splits_n)
-  RMSE(predict.lm(m, train_splits_n), train_splits_n$time)
-})
+train_mu <- mean(cs_train$time)
+rmse0 <- RMSE(cs_test$time, train_mu)
+rmse0
+```
 
-pace_aware_lm_rmse <- sapply(n_l, function(n){
-  train_splits_n <- train_splits %>% 
-    select(result_id, time, leg, split) %>%
-    filter(leg <= n) %>%
-    group_by(result_id) %>%
-    mutate(time_n = sum(split)) %>%
-    ungroup() %>% 
-    mutate(ratio = split/time_n) %>%
-    select(-split) %>%
-    spread(leg, ratio, sep = "")
-    features <- paste(colnames(train_splits_n)[3:(n+2)], collapse = "+")
-    fmula <- paste("time ~ ",features,sep = "")
-  m <- lm(as.formula(fmula) , train_splits_n)
-  RMSE(predict.lm(m, train_splits_n), train_splits_n$time)
-})
+#### Prediction with One Split
+
+In this first model, we attempt to predict the final time as a linear model of the first, with first one and then two degrees:
+
+```{r}
+# Single Degree Regression
+fit1_lm1 <- train(time ~ leg1, data = cs_train, method = "lm")
+pred1_lm1 <- predict.train(fit1_lm1, newdata = cs_test)
+rmse1_lm1 <- RMSE(pred1_lm1, cs_test$time)
+rmse1_lm1
+
+# Two Degree Regression
+fit1_lm2 <- train(time ~ poly(leg1, 2), data = cs_train, method = "lm")
+pred1_lm2 <- predict.train(fit1_lm2, newdata = cs_test)
+rmse1_lm2 <- RMSE(pred1_lm2, cs_test$time)
+rmse1_lm2
+
+rmse1 <- max(rmse1_lm1, rmse2_lm2)
+
+# Plot Regression Lines against data
+cs_test %>%
+  ggplot(aes(leg1, time)) + 
+  geom_point(alpha = .5) + 
+  geom_smooth(method=lm, se = FALSE) +
+  geom_smooth(method=lm, formula = y ~ poly(x, 2), se = FALSE, color = "purple") + 
+  theme + 
+  labs(x = "First 50 (s)", y = "Final Time (s)")
+```
+
+The first split is significantly predictive as expected - faster swimmers begin the race faster - so the reduction in RMSE was more than 50 percent, from `r rmse0` to `r rmse1` for the linear regression. Is the variation mostly coming from the final lap? As in, could we predict accurately up to the 300 or 350 mark, but then the last 50 is too unpredictable? Or is every 50 variable? We can create and visualize a leg-by-leg prediction:
+
+
+
+#### Prediction with Two Splits
+
+With a second split we have significantly more to play with because not only do we have the time so far, but the change in pace between the first and second lengths. Thus our model has two features, the first and second splits. Here I represent that information with the first split and it's ratio to the second split:
+
+```{r}
+# Linear Regression Model (2 Degrees of Each Variable)
+cs_train <- cs_train %>%
+  mutate(ratio12 = leg2/leg1)
+
+cs_test <- cs_test %>%
+  mutate(ratio12 = leg2/leg1)
+  
+fit2_lm <- train(time ~ leg1 + leg2 , data = cs_train, method = "lm")
+pred2_lm <- predict.train(fit2_lm, newdata = cs_test)
+rmse2_lm <- RMSE(pred2_lm, cs_test$time)
+rmse2_lm
+
+fit2_lm2 <- train(time ~ poly(leg1,2) + poly(ratio12,2) , data = cs_train, method = "lm")
+pred2_lm2 <- predict.train(fit2_lm2, newdata = cs_test)
+rmse2_lm2 <- RMSE(pred2_lm2, cs_test$time)
+rmse2_lm2
+
+cs_test %>%
+  ggplot(aes(leg1, time)) + 
+  geom_point(alpha = .5) + 
+  geom_smooth(method=lm, se = FALSE) +
+  geo
 ```
 
 kl <- cs_splits %>%
@@ -237,3 +318,26 @@ kl <- cs_splits %>%
   https://www.fina.org/competition-detailed-results/151105
   - Inconsistent Tie Handling
   
+```{r}
+cut_splits <- function(data, n){
+  cs_obs %>%
+    pivot_longer(cols = starts_with("leg"),
+                 names_to = "leg",
+                 names_prefix = "leg",
+                 values_to = "split") %>%
+    filter(leg <= n) %>%
+    group_by(result_id) %>%
+    mutate(time = sum(split)) %>%
+    ungroup() %>%
+    pivot_wider(names_from = leg, values_from = split, names_prefix = "leg")
+}
+
+legs <- seq(1, 8)
+
+rmse1_by_leg <- sapply(legs, function(n){
+  fit_temp <- train(time ~ poly(leg1,2), cut_splits(cs_train,n), method = "lm")
+  test_temp <- cut_splits(cs_test,n)
+  prediction_temp <- predict.train(fit_temp, newdata = test_temp)
+  RMSE(prediction_temp, test_temp$time)
+})
+```
