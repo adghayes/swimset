@@ -11,6 +11,9 @@ output:
 library(tidyverse)
 library(ggthemes)
 library(knitr)
+library(caret)
+library(corrplot)
+library(VGAM)
 load("./data/fina.rda")
 theme = theme_few()
 ```
@@ -35,22 +38,23 @@ Multiple data sources were explored initially before settling on FINA's results 
 
 ### Crawling and Scraping
 
-fina.org was scrawled with a basic *CrawlSpider* that started from the [overall results list](http://www.fina.org/discipline/swimming/results) and paginated throught the list while following each meet link. From each [meet result page](http://www.fina.org/competition-results/53c913aa-b0d6-446d-86a7-5f3190ff16a9/45/46835), each event link was followed and results were scraped from those pages. Event metadata (url, competition name, dates, title, location, ... ), heat metadata (date, html id, name), and results (time, name, notes, place, rank, points, splits) were scraped from the page and passed to the scrapy pipeline as JSON blobs. Download delay on the spider was set to a generous two seconds to avoid putting any strain on the site. With the delay, the entire site was scraped in a few hours to a JSON file.
+fina.org was scrawled with a basic *CrawlSpider* that started from the [overall results list](http://www.fina.org/discipline/swimming/results) and paginated throught the list while following each meet link. From each [meet result page](http://www.fina.org/competition-results/53c913aa-b0d6-446d-86a7-5f3190ff16a9/45/46835), each event link was followed and results were scraped from those pages. Event metadata (url, competition name, dates, title, location, ... ), heat metadata (date, html id, name), and results (time, name, notes, place, rank, points, splits) were scraped from the page and passed to the scrapy pipeline as JSON blobs. Download delay on the spider was set to a generous ten seconds, as required by the *robots.txt* to avoid putting any strain on the site. With the delay, the entire site was scraped in a few hours to a JSON file.
 
 ### Tidying and Wrangling
 
-The JSON file was imported in R with the *jsonlite* library. Immediately after import, the raw data was saved as an R object to file should someone want to work from that as a starting point. The next, standard wrangling steps involved unnesting the nested data and converting fields to appropriate data types:
+The JSON file was imported in R with the *jsonlite* library. Immediately after import, the raw data was saved as an R object to file should someone want to work from that as a starting point (a smaller file than the raw JSON). The next, standard wrangling steps involved unnesting the data and converting fields to appropriate data types:
 
 - results were converted to seconds, in decimals
 - event titles were separated into distance, stroke, and gender variables
 - events were classified by pool type and competition series
 - results and heats were given unique ID's
+- other scraped metadata was converted to appropriate types
 
 There were three overarching issues that had to be addressed specially: duplicate heats/results, missing splits, and athelete identification.
 
 ### Duplicate Heats
 
-The FINA website often lists results twice - once in a list of results within that heat only, and once in a preliminary or semifinals summary. For example, if 80 people swam in a 100m Freestyle preliminary then there may be 160 results: ten 8-person lists, one for each heat, and a summary 80 person list. The summaries are used inconsistently. Sometimes there is [only a summary](http://www.fina.org/competition-detailed-results/148808), sometimes only heats, sometimes [both](http://fina.org/competition-detailed-results/142757). Some are [especially wacky](http://fina.org/competition-detailed-results/149251). The labels and HTML ID's of the heats are not consistent or reliable enough to differentiate.
+The FINA website often lists results twice - once in a list of results within that heat only, and once in a preliminary or semifinals summary. For example, if 80 people swam in a 100m Freestyle preliminary then there may be 160 results: ten 8-person lists, one for each heat, and a summary 80 person list. The summaries are used inconsistently. Sometimes there is [only a summary](http://www.fina.org/competition-detailed-results/148808), sometimes only heats, sometimes [both](http://fina.org/competition-detailed-results/142757). Some are [especially wacky](http://fina.org/competition-detailed-results/149251). The labels and HTML ID's of the heats are not consistent enough to differentiate.
 
 The ideal would be to keep heat data only and remove summary data, except where only summary data exists. Duplicate results within events were identified as those that shared the same first name, last name, country, and time as another result in a smaller heat. Thus if there are two, the summary would be marked as a duplicate but the original would not. This is a very low bar for duplicates - if a swimmer got the same time in prelims and finals that would also be marked as a duplicate. So the duplicates were not removed directly but rather used to compute the proportion of results in each heat. A heat with mostly probable duplicates is probably a duplicate, and a heat wih no possible duplicates is probably unique. The empirical CDF of these proportions is shown here:
 
@@ -126,20 +130,11 @@ ss %>%
 
 In total there are `r sum(ss$n_comp)` competitions, `r sum(ss$n_event)` events, `r sum(ss$n_phase)` heats, `r sum(ss$n_result)` results in the dataset, with the majority belonging to the "World Cup" or the better known Olympics or World Championships. The World Cup accounts for more than 50% of all results because every year of the World Cup, e.g. "Swimming World Cup 2019," consists of a series of meets held at different dates and different locations across the globe. While the numbers of meets and events above are reliable, the numbers of heats and results are not. The deduplication process described previously is not perfect and doesn't account for outlier data formats. 
 
-Each competition has a set of events like Women's 50 Backstroke, Men's 200 Medley Releay, and so on. As visualized below, most meets have between 20 and 50 different events. The competitions with the least events are the result of older meets, especially early Olympics, when fewer events were commonly swum and competed in. Because of the differences between competitions over time, different events will have differing amounts of data. For example, the Men's 50 Freestyle has been swum in nearly every meet since 1924, but the Mixed Relays are a new addition with very little data. 
+Each competition has a set of events like Women's 50 Backstroke, Men's 200 Medley Releay, and so on. Most meets have between 20 and 50 different events. The competitions with the least events are the result of older meets, especially early Olympics, when fewer events were commonly swum and competed in. Because of the differences between competitions over time, different events will have differing amounts of data. For example, the Men's 50 Freestyle has been swum in nearly every meet since 1924, but the Mixed Relays are a new addition with very little data. 
 
-```{r, dpi = 200}
-comp_events <- ws %>% distinct(event_id, comp_id, series) %>% group_by(comp_id, series) %>% tally() 
+Each event, in turn, has a series of heats. The heats could be a combination of preliminary, semifinal, final, or swim-off heats. Some have no semifinals, only finals, or only summaries. Heats are either true heats or summaries, meaning they represent a group of swimmer results who were in the pool together racing or the combination of all results in that level (prelims, finals, etc.). This is an important distinction, because for true heats we can look at effects of swimmers competing against one another and in summaries we are not able.
 
-comp_events %>% ggplot(aes(n, fill = series)) + 
-  geom_histogram(binwidth = 1) + 
-  labs(x = "Number of Events", y = "Number of Competitions", fill = "Series") + 
-  theme
-```
-
-Each event, in turn, contains one or many heats, which contain individual results. Different competitions arrange the races with prelimaries, semifinals, and finals slightly differently. Some have no semifinals, only finals, or only summaries. Heats are either 
-
-Not every result is usable for an analysis of times or performance because some are actually disqualificaitons or races that were never swum, categorized in the _status_ attribute. 
+Not every result is usable for an analysis of times or performance because some are actually disqualificaitons or races that were never swum, categorized in the _status_ attribute:
 
 - TIME = time exists
 - DNS = did not start
@@ -148,10 +143,87 @@ Not every result is usable for an analysis of times or performance because some 
 - OTHER = does not fit into another category
 - DNF = did not finish
 
-## Split Case Study: 400m Freestyle
+After filtering out non-time results, distributions of a given event's time can be visualized. For example, here are the results of all 200m Freestyle results:
+```{r, dpi = 200}
+ws %>% 
+  filter(status == "TIME", distance == 200, style == "Freestyle", !relay) %>%
+  ggplot(aes(time, stat(count))) +
+  geom_density() + 
+  labs(x = "Time (s)", y = "Count") + 
+  theme +
+  ggtitle("200 Freestyle Times")
+```
+
+The plots of all times of a given event are usually bimodal due to gender differences and, to a lesser extent, 25m vs 50m pool differences. As such, I recommend faceting on pool length and gender in most analyses:
+
+```{r, dpi = 200}
+ws %>% 
+  filter(status == "TIME", distance == 200, style == "Freestyle", !relay) %>%
+  ggplot(aes(time, stat(count))) +
+  geom_density() + 
+  labs(x = "Time (s)", y = "Count") + 
+  theme + 
+  facet_grid(gender ~ pool) +
+  ggtitle("200 Freestyle Times (by pool and gender)")
+```
+
+Split data gives a much richer picture of race. To use the data, join result data with the separate splits data frame on *result_id*. Not all races have splits available, so some races won't be included after an inner join. As an example, below we can see the distribution of splits for the individual Women's 1500m Freestyle in long course (with one of my favorite swimmers, Katie Ledecky, highlighted):
+
+```{r, dpi = 200}
+
+splits_ex <- splits %>% 
+  inner_join(ws, by = "result_id") %>% 
+  filter(distance == 1500, split_distance == 50, pool == "50m", gender == "Women")
+
+kl <- splits_ex %>% 
+  filter(family_name == "LEDECKY")
+  
+splits_ex %>% 
+  ggplot(aes(leg, split, group = leg)) + 
+  geom_point(alpha = .05) + 
+  geom_boxplot(outlier.shape = NA) + 
+  theme_light() + 
+  geom_point(data = kl, color = "blue", alpha = .5) + 
+  labs(x = "Length", y = "Split Time (s)") +
+  ggtitle("Women's 1500m Freestyle Long Course Splits")
+```
+
+In a FINA hosted meet, Katie Ledecky has never swam a split of her 1500m Freestyle slower than the median split time of the dataset. This example demonstrates that, although the dataset does not uniquely identify athletes to calculate career features, individual athletes can be examined by first name, last name, and/or country.
+
+The three figures above show race results independent of year, but the progression of race results over time is one of the most interesting aspects of the dataset. The dataset cannot be used to track World Records, as those are often made outside of the meets in the dataset, but can be used to track Olympic Records, e.g. for the Women's 100 Freestyle:
+```{r, dpi = 200}
+# Compile time series of best time from each year at the Olympics
+ts <- ws %>% filter(series == "Olympic Games") %>%
+  filter(distance == 100, style == "Freestyle", gender == "Women", status == "TIME" ) %>%
+  group_by(year) %>%
+  summarise(best = min(time)) %>%
+  arrange(year) %>%
+  mutate(
+    or = cummin(best),
+    or_diff = best - lag(or),
+    `New OR?` = if_else(or_diff < 0 | is.na(or_diff), "Yes", "No")
+  )
+
+ts %>% ggplot(aes(x = year, y = best)) + 
+  geom_line() + 
+  geom_point(mapping = aes(color = `New OR?`)) +
+  theme + 
+  labs(x = "Year", y = "Olympic Best Time (s)") + 
+  ggtitle("Women's 100m Freestyle, Olympic Best Times")
+```
+
+There are many different directions an investigation of this dataset could take. In the below case study, I've delved deeper into the relationship between race splits. Other avenues of investigation:
+
+- tracking athlete times over the course of their observable career
+- when athletes swim multiple events in their career, are those clusterable patterns or random?
+- relative success of each country year to year at Olympics or World Championships
+- how split distributions vary from event to event, by distance and stroke
+- etc.
+
+## Case Study: 400m Freestyle Splits
 
 ### Exploratory Data Analysis
-The split data gives a greatly enriched picture of a race. Here, I take a deeper look at the split data for the 400m Freestlye and how the splits are predictive of one another.
+Here, I take a deeper look at the split data for the 400m Freestyle and how the splits are predictive of one another.
 
 To start, let's visualize the distribution of splits by race leg:
 
@@ -186,12 +258,11 @@ Above it is still difficult to differentiate variation due to *overall* time and
 
 ```{r, dpi = 200}
 cs_ratios <- cs_splits %>% 
-  filter(split > 25, split < 50) %>%
   mutate(ratio = split/time) 
 
 cs_var <- cs_ratios %>%
   group_by(leg) %>%
-  summarize(s = sd(ratio))
+  summarise(s = sd(ratio))
 
 p <- cs_ratios %>%
   ggplot(aes(leg, ratio, group = leg)) + 
@@ -210,22 +281,19 @@ p +
 
 In the plot above, the dotted horizontal line represents the average split of a race and the blue line is the scaled (x50), standard deviation of each length. It seems the middle four lengths are particularly stable, but swimmers vary more than double in the first and final lengths. Are some swimmers more weighted toward the front, and others toward the end? What are the relationships between each lap? The correlation matrix provides some insight into how the split ratios are related, using the package *corrplot*:
 
-```{r, dpi = 200}
+```{r, dpi = 200, echo = FALSE}
 cs_matrix <- cs_ratios %>% 
   select(ratio, leg, result_id) %>%
   pivot_wider(names_from = leg, values_from = ratio, names_prefix = "Leg ") %>%
   column_to_rownames(var = "result_id")
-
 cs_cor <- cor(cs_matrix)
-
-library(corrplot)
-corrplot(cs_cor, type = "upper", tl.col = "black", 
+corrplot(cs_cor, type = "lower", tl.col = "black", 
          tl.srt = 45)
 ```
 
-The overall trend of the plot is that legs close together are positively correlated and legs further apart are negatively correlated. We already knew this from the previous plot because, since the standard deviation of the middle four lengths is small, deviations from the eventual split average early in the race need to be compensated for at the end of the race. The interesting part about the correlations is that it is not a completely uniform trend. If it were, we would expect the first and last split to be the most negatively correlated but this is not the case - it is the second and second-to-last splits which are most negatively correlated. It seems that the final length is more resilient. Going out very fast (relative to your eventual time) in the initial 100 is normally reflected in slowneww between the 250 and 350 mark.
+The overall trend of the plot is that legs close together are positively correlated and legs further apart are negatively correlated. We could infer this from the previous plot because, since the standard deviation of the middle four lengths is small, deviations from the split average early in the race need to be compensated for at the end of the race. The interesting part about the correlations is that it is not a completely uniform trend. If it were, we would expect the first and last split to be the most negatively correlated but this is not the case - it is the second and second-to-last splits which are most negatively correlated. It seems that the final length is more resilient. Going out very fast (relative to your eventual time) in the initial 100 is normally reflected in slowness between the 250 and 350 mark.
 
-### Final Time Prediction: Women's Long Course 400m Freestyle
+### Final Time Prediction
 
 ```{r}
 cs_obs <- cs_splits %>%
@@ -234,10 +302,9 @@ cs_obs <- cs_splits %>%
   pivot_wider(names_from = leg, values_from = split, names_prefix = "leg")
 ```
 
-How predictive of final time are a race's initial splits? If we see initial splits, how closely can we predict the final time? Because of the variations due to pool type in gender, this study is further limited to only Women's Long Course 400m Freestyle. With one, two, or four splits, how well can regression and other ML techniques predict the final time? I divide the dataset containing `r n_all` into a training set with 80% of the races and a test set with the other 20%. Our baseline model is just predicting final times in the test set as the average of final times in the train set - our model if we had no splits available and were using no other features. For a measure of accuery I use RMSE:
+How predictive of final time are a race's initial splits? If we see the initial leg(s) of a race, how closely can we predict the final time? Because of the variations due to pool type in gender, this study is further limited to only Women's Long Course 400m Freestyle. After the 50-, 100-, or 200-meter mark, how well can we predict the final time? I divide the dataset containing `r nrow(cs_obs)` races into a training set with 80% of the races and a test set with the other 20%. Our baseline model is just predicting final times in the test set as the average of final times in the train set - our model if we had no splits available and were using no other features. For a measure of accuery I use RMSE:
 
 ```{r}
-library(caret)
 set.seed(1)
 train_index <- createDataPartition(cs_obs$time, p = .8, list = FALSE)
 cs_train <- cs_obs[train_index,]
@@ -253,72 +320,138 @@ rmse0
 In this first model, we attempt to predict the final time as a linear model of the first, with first one and then two degrees:
 
 ```{r}
-# Single Degree Regression
-fit1_lm1 <- train(time ~ leg1, data = cs_train, method = "lm")
-pred1_lm1 <- predict.train(fit1_lm1, newdata = cs_test)
-rmse1_lm1 <- RMSE(pred1_lm1, cs_test$time)
-rmse1_lm1
+# Simple Regression
+fit1 <- train(time ~ leg1, data = cs_train, method = "lm")
+pred1 <- predict.train(fit1, newdata = cs_test)
+rmse1 <- RMSE(pred1, cs_test$time)
+rmse1
+```
 
-# Two Degree Regression
-fit1_lm2 <- train(time ~ poly(leg1, 2), data = cs_train, method = "lm")
-pred1_lm2 <- predict.train(fit1_lm2, newdata = cs_test)
-rmse1_lm2 <- RMSE(pred1_lm2, cs_test$time)
-rmse1_lm2
-
-rmse1 <- max(rmse1_lm1, rmse2_lm2)
-
+```{r, echo = FALSE}
 # Plot Regression Lines against data
 cs_test %>%
   ggplot(aes(leg1, time)) + 
   geom_point(alpha = .5) + 
-  geom_smooth(method=lm, se = FALSE) +
-  geom_smooth(method=lm, formula = y ~ poly(x, 2), se = FALSE, color = "purple") + 
+  geom_smooth(method=lm, se = FALSE, color = "purple") +
   theme + 
-  labs(x = "First 50 (s)", y = "Final Time (s)")
+  labs(x = "First Split (s)", y = "Final Time (s)")
 ```
 
-The first split is significantly predictive as expected - faster swimmers begin the race faster - so the reduction in RMSE was more than 50 percent, from `r rmse0` to `r rmse1` for the linear regression. Is the variation mostly coming from the final lap? As in, could we predict accurately up to the 300 or 350 mark, but then the last 50 is too unpredictable? Or is every 50 variable? We can create and visualize a leg-by-leg prediction:
-
-
+The first split is significantly predictive as expected - faster swimmers begin the race faster - so the reduction in RMSE was more than 50%, from `r rmse0` to `r rmse1` for the linear regression. 
 
 #### Prediction with Two Splits
 
-With a second split we have significantly more to play with because not only do we have the time so far, but the change in pace between the first and second lengths. Thus our model has two features, the first and second splits. Here I represent that information with the first split and it's ratio to the second split:
+One fourth of the race in, with a second split, we have significantly more to play with because not only do we have the time so far, but the change in pace between the first and second lengths. Thus our model has two features, the first and second splits. At first I repeat a simple linear model using leg 1 and leg 2, but here I also try other models within the caret framework, in case the better capture the interaction between the two times: 
 
 ```{r}
-# Linear Regression Model (2 Degrees of Each Variable)
-cs_train <- cs_train %>%
-  mutate(ratio12 = leg2/leg1)
-
-cs_test <- cs_test %>%
-  mutate(ratio12 = leg2/leg1)
-  
-fit2_lm <- train(time ~ leg1 + leg2 , data = cs_train, method = "lm")
+# Linear Regression Model
+fit2_lm <- train(time ~ leg1 + leg2, data = cs_train, method = "lm")
 pred2_lm <- predict.train(fit2_lm, newdata = cs_test)
 rmse2_lm <- RMSE(pred2_lm, cs_test$time)
 rmse2_lm
 
-fit2_lm2 <- train(time ~ poly(leg1,2) + poly(ratio12,2) , data = cs_train, method = "lm")
-pred2_lm2 <- predict.train(fit2_lm2, newdata = cs_test)
-rmse2_lm2 <- RMSE(pred2_lm2, cs_test$time)
-rmse2_lm2
+# K-nearest Neighbors
+fit2_knn <- train(time ~ leg1 + leg2, data = cs_train, 
+                  method = "knn", tuneGrid = data.frame(k = seq(3,51,2)))
+pred2_knn <- predict.train(fit2_knn, newdata = cs_test)
+rmse2_knn <- RMSE(pred2_knn, cs_test$time)
+rmse2_knn
 
-cs_test %>%
-  ggplot(aes(leg1, time)) + 
-  geom_point(alpha = .5) + 
-  geom_smooth(method=lm, se = FALSE) +
-  geo
+# Random Forest
+fit2_rf <- train(time ~ leg1 + leg2 , data = cs_train, 
+                  method = "rf", tuneGrid = data.frame(mtry = c(1,2)))
+pred2_rf <- predict.train(fit2_rf, newdata = cs_test)
+rmse2_rf <- RMSE(pred2_rf, cs_test$time)
+rmse2_rf
+
+rmse2 <- min(rmse2_lm, rmse2_knn, rmse2_rf)
 ```
 
-kl <- cs_splits %>%
-  filter(family_name == "LEDECKY")
-  
-  https://www.fina.org/competition-detailed-results/148613
-  - Off Ranking, simply mistaken
-  https://www.fina.org/competition-detailed-results/151105
-  - Inconsistent Tie Handling
-  
+The k-nearest neighbors and random forest algorithms perform worse on the data than a simple linear regression. The reason for this, I suspect, is that the data is simply best fit by regression rather than other ML algorithms because the predictors and the outcome are all smooth, roughly normally distributed continous variables. 
+
+#### Prediction with Four Splits
+
+Since our linear regression was our strongest model at the 100-meter mark, for 200m we simply do the same:
+
 ```{r}
+# Linear Regression Model (2 Degrees of Each Variable)
+fit4 <- train(time ~ leg1 + leg2 + leg3 + leg4, data = cs_train, method = "lm")
+pred4 <- predict.train(fit4, newdata = cs_test)
+rmse4 <- RMSE(pred4, cs_test$time)
+rmse4
+
+rmses <- data.frame(legs_used = c(0,1,2,4), rmse = c(rmse0, rmse1, rmse2, rmse4))
+rmses %>% ggplot(aes(x = legs_used, y = rmse)) +
+  geom_line() + geom_point() + 
+  labs(x = "Lengths Used", y = "RMSE") + 
+  theme
+```
+
+
+### Heat Outcome Prediction
+
+When we take the split predictions at the 50-,100-, and 200-meter marks and apply them to actual heats, how well can we predict the outcome of the heats? To do so, we can only use the results which are part of actual heats. Then, we can compare the actual times and the predicted times by their [Kendall rank correlation coefficient](https://en.wikipedia.org/wiki/Kendall_rank_correlation_coefficient), a measure the distance between two ordered lists, to get a sense of how incorporating more lengths into our prediction affects our prediction of the ranking:
+```{r, echo = FALSE}
+not_summary_results <- ws %>%
+  filter(!is_summary) %>%
+  select(result_id, phase_id)
+
+cs_kt <- cs_obs %>%
+  inner_join(not_summary_results, by = "result_id") %>%
+  mutate(
+    pred1 = predict.train(fit1, newdata = .),
+    pred2 = predict.train(fit2_lm, newdata = .),
+    pred4 = predict.train(fit4, newdata = .)
+  ) %>%
+  group_by(phase_id) %>%
+  summarise(
+    acc1 = kendall.tau(time, pred1),
+    acc2 = kendall.tau(time, pred2),
+    acc4 = kendall.tau(time, pred4)
+  ) %>% 
+  pivot_longer(cols = starts_with("acc"),
+               names_to = "legs",
+               names_prefix = "acc",
+               values_to = "accuracy") %>%
+  mutate(legs = as.integer(legs))
+
+cs_firsts <- cs_obs %>%
+  inner_join(not_summary_results, by = "result_id") %>%
+  mutate(
+    pred1 = predict.train(fit1, newdata = .),
+    pred2 = predict.train(fit2_lm, newdata = .),
+    pred4 = predict.train(fit4, newdata = .)
+  ) %>%
+  group_by(phase_id) %>%
+  summarise(
+    win = result_id[order(time)[1]],
+    win1 = result_id[order(pred1)[1]] == win,
+    win2 = result_id[order(pred2)[1]] == win,
+    win4 = result_id[order(pred4)[1]] == win
+  ) %>% select(-win) %>%
+  pivot_longer(cols = starts_with("win"),
+               names_to = "legs",
+               names_prefix = "win",
+               values_to = "hit") %>%
+  group_by(legs) %>%
+  summarise(accuracy = mean(hit)) %>%
+  mutate(legs = as.integer(legs))
+
+cs_ranks %>% 
+  ggplot(aes(x = legs, y = accuracy, group = legs)) + 
+  geom_point(alpha = .2) + 
+  geom_smooth(method = "lm") + 
+  geom_boxplot() + 
+  geom_line(data = cs_firsts, mapping = aes(x = legs, y = accuracy, group = "all")) +
+  labs(x = "Lengths Used", y = "Correlation Coefficient") + 
+  theme
+```
+
+A more intelligible summary of the data is our ability to simply guess the winner. After 50m, 100m, and 200m the model predicts the winner with 48%, 55%, and 68% respectively.
+
+## Conclusion
+  
+```{r. include = FALSE}
 cut_splits <- function(data, n){
   cs_obs %>%
     pivot_longer(cols = starts_with("leg"),
