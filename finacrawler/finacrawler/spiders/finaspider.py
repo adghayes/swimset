@@ -22,7 +22,7 @@ class FinaSpider(CrawlSpider):
     ]
 
     custom_settings = {
-        'DOWNLOAD_DELAY':2
+        'DOWNLOAD_DELAY':10
     }
 
     def parse_event(self, response):

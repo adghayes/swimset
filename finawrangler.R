@@ -3,6 +3,7 @@
 #####        FINA Data Wrangling      #####
 ###########################################
 ###########################################
+install.packages(c("tidyverse","jsonlite","lubridate"))
 library(tidyverse)
 library(jsonlite)
 library(lubridate)

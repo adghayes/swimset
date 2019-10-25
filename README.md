@@ -10,11 +10,12 @@ Andrew Hayes
     -   [Duplicate Heats](#duplicate-heats)
     -   [Missing Splits](#missing-splits)
     -   [Identifying Athletes](#identifying-athletes)
--   [The Dataset](#the-dataset)
+-   [Data Overview](#data-overview)
 -   [Case Study: 400m Freestyle Splits](#case-study-400m-freestyle-splits)
     -   [Exploratory Data Analysis](#exploratory-data-analysis)
-    -   [Final Time Prediction: Women's Long Course 400m Freestyle](#final-time-prediction-womens-long-course-400m-freestyle)
-    -   [Predicting Heat Outcomes](#predicting-heat-outcomes)
+    -   [Final Time Prediction](#final-time-prediction)
+    -   [Heat Outcome Prediction](#heat-outcome-prediction)
+-   [Conclusion](#conclusion)
 
 This repository includes scripts for scraping, wrangling, and visualizing swim competition data from FINA's published meet results. Data was scraped to JSON format using Python's [scrapy](https://scrapy.org/) library, then loaded into an R workspace for cleaning and visualization with the [tidyverse](https://www.tidyverse.org/). Feel free to clone the repo to recreate visuals or pick out interesting trends, but be aware of the dataset's flaws described below.
 
@@ -31,14 +32,14 @@ Multiple data sources were explored initially before settling on FINA's results 
 
 -   [swimrankings.net](https://www.swimrankings.net/), arguably the best for recent data, is a crowdsourced result database. Swimmers and coaches are encouraged to log in to update their times. Unlike the FINA data, swimmers are uniquely ID'd. The dataset was the basis of [Tanyoung Kim's analysis](https://towardsdatascience.com/data-visualization-of-elite-swimmers-competition-results-part-1-datasets-bd09b68154c2) on Towards Data Science. It contains several meets that FINA does not have, like the Pan American Championships, Commonwealth Games, and European Championships, although not all of FINA's 25m Championship data. Unlike FINA data, it does not contain preliminary and semifinal data within their respective heats, instead all results from each phase of the competition are grouped together. Ultimately, this data was not used because the site's `robot.txt` prohibits scraping.
 
--   FINA (Fédération internationale de natation) is the international body governing swimming. They host the World Championships every other year and also play an important role in the Olympics. FINA also hosts the 25m World Championships, Junior World Championships, "Champion Series" and "World Cup." Data for FINA hosted meets is available at [fina.org](fina.org) and is fairly consistently formatted. The focus of the data cleaning and exploratory data analysis below is the FINA data.
+-   FINA (Fédération internationale de natation) is the international body governing swimming. They host the World Championships every other year and also play an important role in the Olympics. FINA also hosts the 25m World Championships, Junior World Championships, Champion Series and World Cup. Data for FINA hosted meets is available at [fina.org](fina.org) and is fairly consistently formatted. The focus of the data cleaning and exploratory data analysis below is the FINA data.
 
 Data Preparation
 ----------------
 
 ### Crawling and Scraping
 
-fina.org was scrawled with a basic *CrawlSpider* that started from the [overall results list](http://www.fina.org/discipline/swimming/results) and paginated throught the list while following each meet link. From each [meet result page](http://www.fina.org/competition-results/53c913aa-b0d6-446d-86a7-5f3190ff16a9/45/46835), each event link was followed and results were scraped from those pages. Event metadata (url, competition name, dates, title, location, ... ), heat metadata (date, html id, name), and results (time, name, notes, place, rank, points, splits) were scraped from the page and passed to the scrapy pipeline as JSON blobs. Download delay on the spider was set to a generous ten seconds, as required by the *robots.txt* to avoid putting any strain on the site. With the delay, the entire site was scraped in a few hours to a JSON file.
+fina.org was scrawled with a basic scrapy *CrawlSpider* that started from the [overall results list](http://www.fina.org/discipline/swimming/results) and paginated throught the list while following each meet link. From each [meet result page](http://www.fina.org/competition-results/53c913aa-b0d6-446d-86a7-5f3190ff16a9/45/46835), each event link was followed and results were scraped from those pages. Event metadata (url, competition name, dates, title, location, ... ), heat metadata (date, html id, name), and results (time, name, notes, place, rank, points, splits) were scraped from the page and passed to the scrapy pipeline as JSON blobs. Download delay on the spider was set to a generous ten seconds, as required by the *robots.txt* to avoid putting any strain on the site. With the delay, the entire site was scraped in a few hours to a JSON file.
 
 ### Tidying and Wrangling
 
@@ -82,8 +83,8 @@ The main limitation of the FINA dataset is that athletes are not uniquely ID'd. 
 
 Attempting to differentiate swimmers, especially without a test set, would be very difficult to do with accuracy. For the current project, I opted to not try to ID athletes, and continue with the knowledge that name-based identification is very flawed with the FINA data.
 
-The Dataset
------------
+Data Overview
+-------------
 
 What data has FINA made available to us, and what is it's quality? Each competition was classified into one of eight series:
 
@@ -118,9 +119,9 @@ ss %>%
 | Youth Olympic Games  |        2010|       2018|      3|     104|    630|     4655|
 | Marathon Series      |        2018|       2018|      1|      31|     86|     1744|
 
-In total there are 309 competitions, 10312 events, 33612 heats, 281310 results in the dataset, with the majority belonging to the "World Cup" or the better known Olympics or World Championships. The World Cup accounts for more than 50% of all results because every year of the World Cup, e.g. "Swimming World Cup 2019," consists of a series of meets held at different dates and different locations across the globe. While the numbers of meets and events above are reliable, the numbers of heats and results are not. The deduplication process described previously is not perfect and doesn't account for outlier data formats.
+In total there are 309 competitions, 10312 events, 33612 heats, 281310 results in the dataset, with the majority belonging to the World Cup or the better known Olympics or World Championships. The World Cup accounts for more than 50% of all results because every year of the World Cup, e.g. "Swimming World Cup 2019," consists of a series of meets held at different dates and different locations across the globe. While the numbers of meets and events above are reliable, the numbers of heats and results are not. The deduplication process described previously is not perfect and doesn't account for outlier data formats.
 
-Each competition has a set of events like Women's 50 Backstroke, Men's 200 Medley Releay, and so on. Most meets have between 20 and 50 different events. The competitions with the least events are the result of older meets, especially early Olympics, when fewer events were commonly swum and competed in. Because of the differences between competitions over time, different events will have differing amounts of data. For example, the Men's 50 Freestyle has been swum in nearly every meet since 1924, but the Mixed Relays are a new addition with very little data.
+Each competition has a set of events like Women's 50 Backstroke, Men's 200 Medley Releay, and so on. Most meets have between 20 and 50 different events. The competitions with the least events are the result of older meets, especially early Olympics, when fewer events were commonly swum and competed in. Because of the differences between competitions over time, different strokes and distances will have differing amounts of data. For example, the Men's 50 Freestyle has been swum in nearly every meet since 1924, but the Mixed Relays are a new addition with very little data.
 
 Each event, in turn, has a series of heats. The heats could be a combination of preliminary, semifinal, final, or swim-off heats. Some have no semifinals, only finals, or only summaries. Heats are either true heats or summaries, meaning they represent a group of swimmer results who were in the pool together racing or the combination of all results in that level (prelims, finals, etc.). This is an important distinction, because for true heats we can look at effects of swimmers competing against one another and in summaries we are not able.
 
@@ -162,7 +163,7 @@ ws %>%
 
 ![](README_files/figure-markdown_github/unnamed-chunk-3-1.png)
 
-Split data gives a much richer picture of race. To use the data, join result data with the separate splits data frame on *result\_id*. Not all races have splits available, so some races won't be included after an inner join. As an example, below we can see the distribution of splits for the individual Women's 1500m Freestyle in long course (with one of my favorite swimmers, Katie Ledecky, highlighted):
+Split data gives a much richer picture of each race. To use the data, joi the result data with the separate splits data frame on *result\_id*. Not all races have splits available, so some races won't be included after an inner join. As an example, below we can see the distribution of splits for the individual Women's 1500m Freestyle in long course (with one of my favorite swimmers, Katie Ledecky, highlighted):
 
 ``` r
 splits_ex <- splits %>% 
@@ -211,7 +212,7 @@ ts %>% ggplot(aes(x = year, y = best)) +
 
 ![](README_files/figure-markdown_github/unnamed-chunk-5-1.png)
 
-There are many different directions an investigation of this dataset could take. In the below case study, I've delved deeper into the relationship between race splits. Other avenues of investigation:
+There are many different directions an investigation of this dataset could take. In the below case study, I've delved deeper into the relationship between race splits. Other possible avenues of investigation include:
 
 -   tracking athlete times over the course of their observable career
 -   when athletes swim multiple events in their career, are those clusterable patterns or random?
@@ -290,9 +291,9 @@ In the plot above, the dotted horizontal line represents the average split of a 
 
 ![](README_files/figure-markdown_github/unnamed-chunk-9-1.png)
 
-The overall trend of the plot is that legs close together are positively correlated and legs further apart are negatively correlated. We could infer this from the previous plot because, since the standard deviation of the middle four lengths is small, deviations from the split average early in the race need to be compensated for at the end of the race. The interesting part about the correlations is that it is not a completely uniform trend. If it were, we would expect the first and last split to be the most negatively correlated but this is not the case - it is the second and second-to-last splits which are most negatively correlated. It seems that the final length is more resilient. Going out very fast (relative to your eventual time) in the initial 100 is normally reflected in slowness between the 250 and 350 mark.
+The overall trend of the plot is that legs close together are positively correlated and legs further apart are negatively correlated. The interesting bit is that it is not a completely uniform trend. If it were, we would expect the first and last split to be the most negatively correlated but this is not the case - it is the second and second-to-last splits which are most negatively correlated. It seems that the final length is more resilient. Going out very fast (relative to your eventual time) in the initial 100 is normally reflected in relatively slower splits between the 250 and 350 mark, less so the final length.
 
-### Final Time Prediction: Women's Long Course 400m Freestyle
+### Final Time Prediction
 
 ``` r
 cs_obs <- cs_splits %>%
@@ -301,7 +302,7 @@ cs_obs <- cs_splits %>%
   pivot_wider(names_from = leg, values_from = split, names_prefix = "leg")
 ```
 
-How predictive of final time are a race's initial splits? If we see the initial leg(s) of a race, how closely can we predict the final time? Because of the variations due to pool type in gender, this study is further limited to only Women's Long Course 400m Freestyle. With one, two, or four splits, how well can regression and other ML techniques predict the final time? I divide the dataset containing 1457 races into a training set with 80% of the races and a test set with the other 20%. Our baseline model is just predicting final times in the test set as the average of final times in the train set - our model if we had no splits available and were using no other features. For a measure of accuery I use RMSE:
+How predictive of final time are a race's initial splits? If we see the initial leg(s) of a race, how closely can we predict the final time? Because of the variations due to pool type in gender, this analysis is further limited to only Women's Long Course 400m Freestyle. After the 50-, 100-, or 200-meter mark, how well can we predict the final time? I divide the dataset containing 1457 races into a training set with 80% of the races and a test set with the other 20%. Our baseline model is just predicting final times in the test set as the average of final times in the train set - our model if we had no splits available and were using no other features. For a measure of accuery I use RMSE:
 
 ``` r
 set.seed(1)
@@ -332,7 +333,7 @@ rmse1
 
 ![](README_files/figure-markdown_github/unnamed-chunk-13-1.png)
 
-The first split is significantly predictive as expected - faster swimmers begin the race faster - so the reduction in RMSE was more than 50 percent, from 14.0524826 to 5.3626677 for the linear regression.
+The first split is significantly predictive as expected - faster swimmers begin the race faster - so the reduction in RMSE was more than 50%, from 14.0524826 to 5.3626677 for the linear regression.
 
 #### Prediction with Two Splits
 
@@ -370,26 +371,53 @@ rmse2_rf
 
     ## [1] 3.620417
 
-The k-nearest neighbors and random forst algorithms perform worse on the data than a simple linear regression. Using continuous predictors to predict a continuous outcome is best served by a continuous model. The models were also attempted with the first split and the ratio of the two splits, rather than simply the two splits, but for all models this performed worse.
+``` r
+rmse2 <- min(rmse2_lm, rmse2_knn, rmse2_rf)
+```
+
+The k-nearest neighbors and random forest algorithms perform worse on the data than a simple linear regression. The reason for this, I suspect, is that the data is best fit by regression rather than other ML algorithms because the predictors and the outcome are all smooth, roughly normally distributed continous variables.
 
 #### Prediction with Four Splits
 
+Since our linear regression was our strongest model at the 100-meter mark, for 200m we do the same:
+
 ``` r
 # Linear Regression Model (2 Degrees of Each Variable)
-cs_train <- cs_train %>%
-  mutate()
-fit4_lm <- train(time ~ leg1 + leg2 + leg3 + leg4, data = cs_train, method = "lm")
-pred4_lm <- predict.train(fit4_lm, newdata = cs_test)
-rmse4_lm <- RMSE(pred4_lm, cs_test$time)
-rmse4_lm
+fit4 <- train(time ~ leg1 + leg2 + leg3 + leg4, data = cs_train, method = "lm")
+pred4 <- predict.train(fit4, newdata = cs_test)
+rmse4 <- RMSE(pred4, cs_test$time)
+rmse4
 ```
 
     ## [1] 1.841535
 
-### Predicting Heat Outcomes
+After having made predictions and calculated accuracies for the three points in the race under consideration - 50m, 100m, 200m - we can see how progessive splits give us more predictive power for the final time.
 
-\`\`\`{r. include = FALSE} cut\_splits &lt;- function(data, n){ cs\_obs %&gt;% pivot\_longer(cols = starts\_with("leg"), names\_to = "leg", names\_prefix = "leg", values\_to = "split") %&gt;% filter(leg &lt;= n) %&gt;% group\_by(result\_id) %&gt;% mutate(time = sum(split)) %&gt;% ungroup() %&gt;% pivot\_wider(names\_from = leg, values\_from = split, names\_prefix = "leg") }
+``` r
+rmses <- data.frame(legs_used = c(0,1,2,4), rmse = c(rmse0, rmse1, rmse2, rmse4))
+rmses %>% ggplot(aes(x = legs_used, y = rmse)) +
+  geom_line() + geom_point() + 
+  labs(x = "Lengths Used", y = "RMSE") + 
+  theme
+```
 
-legs &lt;- seq(1, 8)
+![](README_files/figure-markdown_github/unnamed-chunk-16-1.png)
 
-rmse1\_by\_leg &lt;- sapply(legs, function(n){ fit\_temp &lt;- train(time ~ poly(leg1,2), cut\_splits(cs\_train,n), method = "lm") test\_temp &lt;- cut\_splits(cs\_test,n) prediction\_temp &lt;- predict.train(fit\_temp, newdata = test\_temp) RMSE(prediction\_temp, test\_temp$time) }) \`\`\`
+### Heat Outcome Prediction
+
+When we take the split predictions at the 50-,100-, and 200-meter marks and apply them to actual heats, how well can we predict the outcome of the heats? To do so, we can only use the results which are part of actual heats. Then we can compare the actual times and the predicted times by their [Kendall rank correlation coefficient](https://en.wikipedia.org/wiki/Kendall_rank_correlation_coefficient), a measure of the distance between two ordered lists, to get a sense of how incorporating more lengths into our prediction affects our prediction of the ranking:
+
+![](README_files/figure-markdown_github/unnamed-chunk-17-1.png)
+
+In the plot above, 1 means that the outcome of the heat was predicted perfectly, -1 means the most wrong possible prediction, and 0 an average or random prediction. A more digestible summary of the data is our ability to simply guess the winner. After 50m, 100m, and 200m the model predicts the winner with 48%, 55%, and 68% respectively.
+
+Conclusion
+----------
+
+There were three main parts of this project: 1. Understanding [fina.org](fina.org) results and scraping with [finaspider.py](/finacrawler/finacrawler/spiders/finaspider.py) 2. Wrangling the data to a usable format in [finawrangler.R](/finawrangler.R) 3. Performing exploratory data analysis, including a deeper dive in the case study detailed above
+
+Part 2 revealed the good, the bad, and the ugly about the dataset. The dataset is large at over 200,000 unique results and covers many years and various competition series. It offers a window into swimming performance at the highest level. The inconsistent formatting of heats makes comparisons across prelimaries, semifinals, and finals difficult and introduces a lot of duplicates (most of which were removed). The splits are inconsistently formatted as well and not always included, but in most cases were clean enough to be included in the dataset. Athlete identification, however, is the great weakness of the dataset. Unlike [swimrankings.net](swimrankings.net) which has athlete pages and unique ID's, FINA only has first and last names. It would also be nice to have a broader dataset with access to non-FINA hosted competition series like the Pan American Championships and others.
+
+In Part 3 the data is finally explored and some example visualizations reveal the patterns - in splits, results, and longitudinally - that can be found in the data. The deep dive into 400m splits doesn't reveal anything particularly shocking but demonstrates the predictive power of simple linear regressions on the outcome of the race. After 100m of the race, in over 50% of heats we can already predict the eventual winner without any additional background information on the swimmers or their other races. Also, there was the interesting observation that front-end heavy races (that is, races that are disproportionately fast in the first two lengths) suffer not in the final length as much as the third- and second-to-last lengths.
+
+Thanks for reading (if you are crazy enough to be reading this...) and please take advantage of the dataset if you're interested in swimming results!
