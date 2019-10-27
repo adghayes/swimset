@@ -382,7 +382,7 @@ The k-nearest neighbors and random forest algorithms perform worse on the data t
 Since our linear regression was our strongest model at the 100-meter mark, for 200m we do the same:
 
 ``` r
-# Linear Regression Model (2 Degrees of Each Variable)
+# Linear Regression Model
 fit4 <- train(time ~ leg1 + leg2 + leg3 + leg4, data = cs_train, method = "lm")
 pred4 <- predict.train(fit4, newdata = cs_test)
 rmse4 <- RMSE(pred4, cs_test$time)

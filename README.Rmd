@@ -327,7 +327,7 @@ rmse1 <- RMSE(pred1, cs_test$time)
 rmse1
 ```
 
-```{r split1_lm_plot, echo = FALSE}
+```{r split1_lm_plot, dpi = 200, echo = FALSE}
 # Plot Regression Lines against data
 cs_test %>%
   ggplot(aes(leg1, time)) + 
@@ -374,7 +374,7 @@ The k-nearest neighbors and random forest algorithms perform worse on the data t
 Since our linear regression was our strongest model at the 100-meter mark, for 200m we do the same:
 
 ```{r split4_models}
-# Linear Regression Model (2 Degrees of Each Variable)
+# Linear Regression Model
 fit4 <- train(time ~ leg1 + leg2 + leg3 + leg4, data = cs_train, method = "lm")
 pred4 <- predict.train(fit4, newdata = cs_test)
 rmse4 <- RMSE(pred4, cs_test$time)
@@ -383,7 +383,7 @@ rmse4
 
 After having made predictions and calculated accuracies for the three points in the race under consideration - 50m, 100m, 200m - we can see how progessive splits give us more predictive power for the final time.
 
-```{r split_legs_v_RMSE}
+```{r split_legs_v_RMSE, dpi = 200}
 # Plotting RMSE against lengths used for regression
 rmses <- data.frame(legs_used = c(0,1,2,4), rmse = c(rmse0, rmse1, rmse2, rmse4))
 rmses %>% ggplot(aes(x = legs_used, y = rmse)) +
@@ -397,7 +397,7 @@ rmses %>% ggplot(aes(x = legs_used, y = rmse)) +
 
 When we take the split predictions at the 50-,100-, and 200-meter marks and apply them to actual heats, how well can we predict the outcome of the heats? To do so, we can only use the results which are part of actual heats. Then we can compare the actual times and the predicted times by their [Kendall rank correlation coefficient](https://en.wikipedia.org/wiki/Kendall_rank_correlation_coefficient), a measure of the distance between two ordered lists, to get a sense of how incorporating more lengths into our prediction affects our prediction of the ranking:
 
-```{r kendall_tau_distribution, echo = FALSE}
+```{r kendall_tau_distribution, dpi = 200, echo = FALSE}
 not_summary_results <- ws %>%
   filter(!is_summary) %>%
   select(result_id, phase_id)
