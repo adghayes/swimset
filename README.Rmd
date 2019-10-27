@@ -15,7 +15,7 @@ library(caret)
 library(corrplot)
 library(VGAM)
 load("./data/fina.rda")
-theme = theme_few()
+theme = theme_light()
 ```
 
 This repository includes scripts for scraping, wrangling, and visualizing swim competition data from FINA's published meet results. Data was scraped to JSON format using Python's [scrapy](https://scrapy.org/) library, then loaded into an R workspace for cleaning and visualization with the [tidyverse](https://www.tidyverse.org/). Feel free to clone the repo to recreate visuals or pick out interesting trends, but be aware of the dataset's flaws described below.
