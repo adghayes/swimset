@@ -188,7 +188,8 @@ server <- function(input, output, session) {
       scale_x_continuous(breaks = seq(1,10000,distance()/50)) +
       scale_y_continuous(breaks = seq(0,500,5)) +
       theme_light() + 
-      labs(x = "Time (s)", y = "Counnt")
+      labs(x = "Time (s)", y = "Count")
+      # theme(axis.text.x = element_text(angle = -60))
     
     # Both genders --> fill represents gender
     if(length(genders_selected()) < 2){
@@ -228,7 +229,7 @@ server <- function(input, output, session) {
       theme_light() + 
       labs(x = "Length", y = "Split Time (s)") + 
       scale_y_continuous(breaks = seq(1,1000,1)) + 
-      scale_x_continuous(breaks = seq(1,30,1))
+      scale_x_continuous(breaks = seq(0,30,2))
     
     # Both genders --> faceted plot
     if(length(genders_selected()) > 1){
@@ -240,7 +241,6 @@ server <- function(input, output, session) {
       p <- p + geom_boxplot(aes(group = leg), outlier.shape = NA, 
                             notch = input$add_notch, fill = "#00bc8c")
     }
-    
     
     # Smoothed line overlay  
     if(input$split_plot_overlay == "line"){
@@ -274,7 +274,9 @@ server <- function(input, output, session) {
     min_best <- olympic_bests()$time %>% min()
     max_best <- olympic_bests()$time %>% max()
     range_best = round(min_best, max_best)
-    p <- olympic_bests() %>% ggplot(aes(x = year, y = time, label = family_name)) + 
+    p <- olympic_bests() %>% 
+      mutate(display_name = if_else(is_or == "Yes", family_name, "")) %>%
+      ggplot(aes(x = year, y = time, label = display_name)) + 
       geom_line() + 
       geom_point(mapping = aes(color = is_or)) +
       scale_x_continuous(breaks = seq(1900,2100,8)) +
@@ -284,7 +286,8 @@ server <- function(input, output, session) {
       theme_light() +
       scale_color_manual(values=c("#375a7f","#00bc8c")) +
       labs(x = "Year", y = "Olympic Best Time (s)", color = "Olympic Record") +
-      geom_label_repel(size = 3, force = 10)
+      geom_label_repel(size = 3, force = 10) + 
+      theme(legend.position = "none")
     
     # Both genders -> vertical faceting
     if(length(genders_selected()) > 1){
