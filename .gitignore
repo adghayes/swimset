@@ -4,3 +4,5 @@
 .Ruserdata
 data/raw.rda
 data/fina.json
+README.html
+shiny/rsconnect/
