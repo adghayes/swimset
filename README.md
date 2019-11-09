@@ -1,5 +1,5 @@
-### [Shiny App](https://adghayes.shinyapps.io/olympicSwimmingResultsDashboard/)
-### [Report](/report.pdf)
+### [Shiny App](https://adghayes.shinyapps.io/olympicSwimmingResultsDashboard/) - Olympic Swimming Results Dashboard
+### [Report](/report.pdf) - Data Scraping, Wrangling, and Analysis Details
 ## Description
 
 This repository includes scripts for scraping, wrangling, and visualizing swim competition data from FINA's published meet results. Data was scraped to JSON format using Python's [scrapy](https://scrapy.org/) library, then loaded into an R workspace for cleaning and visualization with the [tidyverse](https://www.tidyverse.org/). You can read a detailed backround and a case study on race splits in [report.pdf](/report.pdf). Much more fun is the [Shiny app](https://adghayes.shinyapps.io/olympicSwimmingResultsDashboard/), hosted at shinyapps.io, which provides a dashboard to visualize Olympic Games results.
