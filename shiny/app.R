@@ -1,14 +1,19 @@
-library(dplyr)
-library(ggplot2)
 library(shiny)
 library(shinythemes)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
 library(ggrepel)
+
+
 load("./odata.rda") # Olympic subset of fina.org data
 
+# Formatting axis breaks from seconds to mm:ss
 axis_time <- function(seconds){
   minutes <- seconds %/% 60
   seconds_left <- seconds %% 60
-  seconds_left_str <- format(seconds %% 60, digits = 2, 
+  seconds_left_str <- format(seconds_left, digits = 3, 
                              drop0trailing = TRUE, trim = TRUE)
   if_else(
     minutes > 0,
@@ -32,10 +37,12 @@ divisions <- c("Women" = "Women",
                  "Men" = "Men", 
                  "Both" = "Both")
 
+# List of events for picker
 events <- oresults %>% 
   arrange(distance, event) %>% 
   pull(event) %>% unique()
 
+# List of phase types for checkbox group
 phase_types <- c("Final", "Semifinal", "Heat", "Swim Off")
 
 # Client Definition
@@ -215,6 +222,7 @@ server <- function(input, output, session) {
 
   # Time histogram
   output$time_plot <- renderPlot({
+    outputOptions(output, "time_plot", suspendWhenHidden = FALSE)
     window_break_adjust <- round(1500/session$clientData[["output_time_plot_width"]])
     time_breaks <- seq(0,10000,distance()/50*window_break_adjust)
     p <- selected_results() %>%
@@ -266,6 +274,7 @@ server <- function(input, output, session) {
   
   # Split plot
   output$split_plot <- renderPlot({
+    outputOptions(output, "split_plot", suspendWhenHidden = FALSE)
     set.seed(1) # So points remain constant as parameters change
     p <- selected_splits() %>%
       ggplot(aes(leg, split)) + 
@@ -329,6 +338,7 @@ server <- function(input, output, session) {
       group_by(year, gender) %>%
       top_n(n = 1, desc(time)) %>%
       ungroup() %>%
+      group_by(gender) %>%
       arrange(year) %>%
       mutate(
         or = cummin(time),
@@ -336,24 +346,28 @@ server <- function(input, output, session) {
         year_incr = year - lag(year),
         or_change = if_else(year_incr == 0, lag(or_change), or_change),
         is_or = or_change < 0 | is.na(or_change)
-      )
+      ) %>%
+      ungroup()
   })
   
   # Olympic Record Time Series Plot
   output$orecord_plot <- renderPlot({
+    outputOptions(output, "orecord_plot", suspendWhenHidden = FALSE)
     min_best <- olympic_bests()$time %>% min()
     max_best <- olympic_bests()$time %>% max()
     range_best <- round(max_best - min_best)
     y_tick_space <- round(range_best/20*length(genders_selected()))
+    y_tick_space <- if_else(y_tick_space < 1, .1, y_tick_space)
     n_bests <- nrow(olympic_bests())
-    nudge = append(rep(-1, n_bests %% 2), rep(c(-1,1), n_bests %/% 2))
     p <- olympic_bests() %>% 
       mutate(display_name = if_else(is_or, family_name, "")) %>%
-      ggplot(aes(x = year, y = time, label = display_name)) + 
+      group_by(gender) %>%
+      mutate(nudge = c(rep(-1, n() %% 2), rep(c(-1,1), n() %/% 2))) %>%
+      ungroup() %>% 
+      ggplot(aes(x = year, y = time, label = display_name, vjust = nudge)) + 
       geom_line() + 
-      geom_label_repel(direction = "y", nudge_y = nudge*y_tick_space) + 
       geom_point(mapping = aes(color = is_or), size = 2) +
-      geom_label_repel(direction = "y", nudge_y = nudge*y_tick_space, segment.size = 0) + 
+      geom_label_repel(direction = "y", segment.size = 0) + 
       scale_x_continuous(breaks = seq(1904,2100,8)) +
       scale_y_continuous(breaks = seq(0, 2000, y_tick_space), labels = axis_time) +
       scale_color_manual(values=c("#375a7f","#00bc8c")) + 
@@ -363,7 +377,7 @@ server <- function(input, output, session) {
     
     # Both genders -> vertical faceting
     if(length(genders_selected()) > 1){
-      p <- p + facet_grid(gender ~ .)
+      p <- p + facet_grid(gender ~ ., scales = "free")
     }
     
     p
