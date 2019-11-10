@@ -61,12 +61,6 @@ ui <- fluidPage(theme = shinytheme("darkly"),
         selectInput(inputId = "division", label = "Division:", 
                     choices = divisions)
       )
-    ),
-    conditionalPanel(
-      condition = "input.tags != 'orecords'",
-      checkboxGroupInput(inputId = "phase_types", label = "Heat Type",
-                         choices = phase_types, selected = phase_types,
-                         inline = TRUE)
     )
   ),
   htmlOutput("warning"),
@@ -86,7 +80,7 @@ ui <- fluidPage(theme = shinytheme("darkly"),
       hr(),
       fluidRow(
         column(
-          width = 3, offset = 1,
+          width = 2, offset = .5,
           selectInput("split_plot_overlay", label = "Overlay:",
                      choices = c("Boxplot" = "boxplot",
                                  "Line" = "line",
@@ -132,6 +126,18 @@ ui <- fluidPage(theme = shinytheme("darkly"),
           width = 5, offset = .5,
           h5(tags$b(tags$i("Women's Olympic Records"))),
           tableOutput("orecord_table_women"))
+      )
+    )
+  ),
+  fluidRow(
+    conditionalPanel(
+      condition = "input.tags != 'orecords'",
+      column(
+        offset = .5,
+        width = 4,
+        checkboxGroupInput(inputId = "phase_types", label = "Heat Type",
+                           choices = phase_types, selected = phase_types,
+                           inline = TRUE)
       )
     )
   )
@@ -206,7 +212,9 @@ server <- function(input, output, session) {
       nrow()
     first_year <- selected_results() %>%
       pull(year) %>% min()
-    if(n_results > 0){
+    if(n_results == 0){
+      "There are no results for the filter criteria."
+    } else {
       paste("Times for ", n_results,
             " distinct races are shown above, ",
             "starting as early as ", 
@@ -215,8 +223,6 @@ server <- function(input, output, session) {
             " races without times, either disqualifications, ",
             "did not finish, did not start, or missing data.", 
             sep = "")
-    } else {
-      "There are no results for the filter criteria."
     }
   })
 
@@ -325,7 +331,7 @@ server <- function(input, output, session) {
     
     p
     
-    })
+  })
   
   ##########################################
   ############ Olympic Records #############
