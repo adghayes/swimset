@@ -1,8 +1,22 @@
-library(tidyverse)
+library(dplyr)
+library(ggplot2)
 library(shiny)
 library(shinythemes)
 library(ggrepel)
 load("./odata.rda") # Olympic subset of fina.org data
+
+axis_time <- function(seconds){
+  minutes <- seconds %/% 60
+  seconds_left <- seconds %% 60
+  seconds_left_str <- format(seconds %% 60, digits = 2, 
+                             drop0trailing = TRUE, trim = TRUE)
+  if_else(
+    minutes > 0,
+    paste(minutes, ":", if_else(seconds_left < 10, "0", ""), 
+          seconds_left_str, sep = ""),
+    seconds_left_str
+  )
+}
 
 # Limiting scope to individual results
 oresults <- oresults %>% 
@@ -22,6 +36,8 @@ events <- oresults %>%
   arrange(distance, event) %>% 
   pull(event) %>% unique()
 
+phase_types <- c("Final", "Semifinal", "Heat", "Swim Off")
+
 # Client Definition
 ui <- fluidPage(theme = shinytheme("darkly"),
   titlePanel("Olympic Swimming Results Dashboard"),
@@ -32,82 +48,113 @@ ui <- fluidPage(theme = shinytheme("darkly"),
     fluidRow(
       column(5,
         selectInput(inputId = "event", label = "Event:", 
-                    choices = events, selected = "400 Freestyle")
+                    choices = events, selected = "400 Medley")
       ),
       column(5, offset = 1,
         selectInput(inputId = "division", label = "Division:", 
                     choices = divisions)
       )
+    ),
+    conditionalPanel(
+      condition = "input.tags != 'orecords'",
+      checkboxGroupInput(inputId = "phase_types", label = "Heat Type",
+                         choices = phase_types, selected = phase_types,
+                         inline = TRUE)
     )
   ),
   htmlOutput("warning"),
-  tabsetPanel(type = "tabs",
-    tabPanel(
-      title = "Olympic Records", 
-      plotOutput(outputId = "orecord_plot"),
-      br(),
-      hr(),
-      tags$p(paste("*Note that there are other instances in which",
-                   "an Olympic Record was broken during a Games",
-                   "but then broken again at the same Games, either",
-                   "in the same heat or a later heat. These instances",
-                   "are not shown here. The records shown here are only",
-                   "those that were held between Games.")),
-      conditionalPanel(
-        condition = "input.division == 'Men' || input.division == 'Both'",
-        column(
-          width = 5, offset = .5,
-          h6("Men's Olympic Records"),
-          tableOutput("orecord_table_men"))
-      ),
-      conditionalPanel(
-        condition = "input.division == 'Women' || input.division == 'Both'",
-        column(
-          width = 5, offset = .5,
-          h6("Women's Olympic Records"),
-          tableOutput("orecord_table_women"))
-      )
-    ),
+  tabsetPanel(type = "tabs", id = "tags",
     tabPanel(
       title = "Times", 
       plotOutput(outputId = "time_plot", width = "100%"),
       br(),
-      hr(),
-      textOutput("time_info")
+      textOutput("time_info"),
+      hr()
     ),
     tabPanel(
       title = "Splits", width = "100%",
       plotOutput(outputId = "split_plot"),
       br(),
-      hr(),
       textOutput("split_info"),
-      br(),
+      hr(),
       fluidRow(
         column(
           width = 3, offset = 1,
           selectInput("split_plot_overlay", label = "Overlay:",
                      choices = c("Boxplot" = "boxplot",
                                  "Line" = "line",
-                                 "None" = "none"), selected = "boxplot")
-       ),
-       conditionalPanel(condition = "input.split_plot_overlay == 'line'",
-         column(
-           width = 2, offset = 0,
-           sliderInput("num_lines", label = "Quantiles:",
-                       min = 1, max = 4, value = 1, step = 1))
-       ),
-       conditionalPanel(condition = "input.split_plot_overlay == 'boxplot'",
-          column(
-            width = 2, offset = 0,
-                checkboxInput("add_notch", label = "Add Notches:")
-        )
-       )
-     )
-    )   
+                                 "None" = "none",
+                                 "Violin" = "violin"), selected = "violin")
+         ),
+         conditionalPanel(condition = "input.split_plot_overlay == 'line'",
+           column(
+             width = 2, offset = 0,
+             sliderInput("num_lines", label = "Quantiles:",
+                         min = 1, max = 4, value = 1, step = 1))
+         ),
+         conditionalPanel(condition = "input.split_plot_overlay == 'boxplot'",
+            column(
+              width = 2, offset = 0,
+                  checkboxInput("add_notch", label = "Add Notches:")
+            )
+         )
+      )
+    ),
+    tabPanel(
+      title = "Olympic Records", 
+      value = "orecords",
+      plotOutput(outputId = "orecord_plot"),
+      br(),
+      tags$p(paste("*Note that there are other instances in which",
+                   "an Olympic Record was broken during a Games",
+                   "but then broken again at the same Games, either",
+                   "in the same heat or a later heat. These instances",
+                   "are not shown here. The records shown here are only",
+                   "those that were held between Games.")),
+      hr(),
+      conditionalPanel(
+        condition = "input.division == 'Men' || input.division == 'Both'",
+        column(
+          width = 5, offset = .5,
+          h5(tags$b(tags$i("Men's Olympic Records"))),
+          tableOutput("orecord_table_men"))
+      ),
+      conditionalPanel(
+        condition = "input.division == 'Women' || input.division == 'Both'",
+        column(
+          width = 5, offset = .5,
+          h5(tags$b(tags$i("Women's Olympic Records"))),
+          tableOutput("orecord_table_women"))
+      )
+    )
   )
 )
 
 server <- function(input, output, session) {
+  
+  ##############################
+  ####    Miscellaneous     ####
+  ##############################
+  
+  # Message to output if a non-event is selected
+  output$warning <- renderText({
+    warning_html <- ""
+    if((input$division %in% c("Women", "Both") && input$event == "1500 Freestyle") ||
+       (input$division %in% c("Men", "Both") && input$event == "800 Freestyle")){
+      warning_text <- paste("Historically, the longest men's distance ",
+                            "event at the Olympics has been the 1500m ",
+                            "Freestyle while the longest women's distance ",
+                            "event has been the 800m Freestyle. At Tokyo ",
+                            "in 2020 the Olympics will, for the first time, ",
+                            "have a Men's 800m Freestyle and a Women's 1500m",
+                            "Freestyle like other modern swim competitions.",
+                            sep = "")
+      warning_html <- paste("<p><font color=\"#F39C12\">",
+                            warning_text,
+                            "</font></p>")
+    }
+    warning_html
+  })
   
   # Translate division selection to vector
   genders_selected <- reactive({
@@ -123,6 +170,10 @@ server <- function(input, output, session) {
     as.integer(str_extract(input$event,"\\d*"))
   })
   
+  ##########################################
+  ############ Time Distribution ###########
+  ##########################################
+  
   # Filter results for dashboard
   selected_results <- reactive({
     
@@ -133,30 +184,8 @@ server <- function(input, output, session) {
     
     oresults %>% 
       filter(event == input$event,
-             gender %in% genders_selected()
-      )
-  })
-  
-  # Filtered splits for dashboard
-  selected_splits <- reactive({
-    osplits %>% 
-      inner_join(selected_results(), by = "result_id")
-  })
-  
-  # Formatted time series for record history
-  olympic_bests <- reactive({
-    selected_results() %>% 
-      filter(!is.na(time)) %>%
-      group_by(year, gender) %>%
-      top_n(n = 1, desc(time)) %>%
-      ungroup() %>%
-      arrange(year) %>%
-      mutate(
-        or = cummin(time),
-        or_change = time - lag(or),
-        year_incr = year - lag(year),
-        or_change = if_else(year_incr == 0, lag(or_change), or_change),
-        is_or = if_else(or_change < 0 | is.na(or_change), "Yes", "No")
+             gender %in% genders_selected(),
+             phase_type %in% input$phase_types
       )
   })
   
@@ -170,26 +199,31 @@ server <- function(input, output, session) {
       nrow()
     first_year <- selected_results() %>%
       pull(year) %>% min()
-    paste("Times for ", n_results,
-          " distinct races are shown above, ",
-          "starting as early as ", 
-          first_year, ". ", 
-          "There were also ", n_non_times,
-          " races without times, either disqualifications, ",
-          "did not finish, did not start, or missing data.", sep = "")
+    if(n_results > 0){
+      paste("Times for ", n_results,
+            " distinct races are shown above, ",
+            "starting as early as ", 
+            first_year, ". ", 
+            "There were also ", n_non_times,
+            " races without times, either disqualifications, ",
+            "did not finish, did not start, or missing data.", 
+            sep = "")
+    } else {
+      "There are no results for the filter criteria."
+    }
   })
 
   # Time histogram
   output$time_plot <- renderPlot({
-
+    window_break_adjust <- round(1500/session$clientData[["output_time_plot_width"]])
+    time_breaks <- seq(0,10000,distance()/50*window_break_adjust)
     p <- selected_results() %>%
       filter(!is.na(time)) %>%
       ggplot(aes(time, stat(count)))  + 
-      scale_x_continuous(breaks = seq(1,10000,distance()/50)) +
+      scale_x_continuous(breaks = time_breaks, label = axis_time) +
       scale_y_continuous(breaks = seq(0,500,5)) +
       theme_light() + 
       labs(x = "Time (s)", y = "Count")
-      # theme(axis.text.x = element_text(angle = -60))
     
     # Both genders --> fill represents gender
     if(length(genders_selected()) < 2){
@@ -204,6 +238,16 @@ server <- function(input, output, session) {
     
     p
     
+  }, execOnResize = TRUE)
+  
+  ##########################################
+  ############ Split Breakdown #############
+  ##########################################
+  
+  # Filtered splits for dashboard
+  selected_splits <- reactive({
+    osplits %>% 
+      inner_join(selected_results(), by = "result_id")
   })
   
   # Text message about number of splits in split plot
@@ -227,8 +271,8 @@ server <- function(input, output, session) {
       ggplot(aes(leg, split)) + 
       geom_point(alpha = .5, position = position_jitter(width = .2)) + 
       theme_light() + 
-      labs(x = "Length", y = "Split Time (s)") + 
-      scale_y_continuous(breaks = seq(1,1000,1)) + 
+      labs(x = "Length", y = "Split Time") + 
+      scale_y_continuous(breaks = seq(1,1000,1), label = axis_time) + 
       scale_x_continuous(breaks = seq(0,30,2))
     
     # Both genders --> faceted plot
@@ -236,9 +280,14 @@ server <- function(input, output, session) {
       p <- p + facet_grid(. ~ gender)
     }
     
+    # Violin overlay
+    if(input$split_plot_overlay == "violin"){
+      p <- p + geom_violin(aes(group = leg), alpha = .5, fill = "#00bc8c")
+    }
+    
     # Boxplot overlay
     if(input$split_plot_overlay == "boxplot"){
-      p <- p + geom_boxplot(aes(group = leg), outlier.shape = NA, 
+      p <- p + geom_boxplot(aes(group = leg), outlier.shape = NA, alpha = .5,
                             notch = input$add_notch, fill = "#00bc8c")
     }
     
@@ -256,7 +305,7 @@ server <- function(input, output, session) {
           }) %>%
           ungroup()
         
-        n_splines <- max(split_quantiles$leg)/2
+        n_splines <- max(split_quantiles$leg)/2 + 1
         p <- p + 
           suppressWarnings(geom_smooth(data = split_quantiles, 
                       mapping = aes(group = quantile),
@@ -269,25 +318,48 @@ server <- function(input, output, session) {
     
     })
   
+  ##########################################
+  ############ Olympic Records #############
+  ##########################################
+  
+  # Formatted time series for record history
+  olympic_bests <- reactive({
+    selected_results() %>% 
+      filter(!is.na(time)) %>%
+      group_by(year, gender) %>%
+      top_n(n = 1, desc(time)) %>%
+      ungroup() %>%
+      arrange(year) %>%
+      mutate(
+        or = cummin(time),
+        or_change = time - lag(or),
+        year_incr = year - lag(year),
+        or_change = if_else(year_incr == 0, lag(or_change), or_change),
+        is_or = or_change < 0 | is.na(or_change)
+      )
+  })
+  
   # Olympic Record Time Series Plot
   output$orecord_plot <- renderPlot({
     min_best <- olympic_bests()$time %>% min()
     max_best <- olympic_bests()$time %>% max()
-    range_best = round(min_best, max_best)
+    range_best <- round(max_best - min_best)
+    y_tick_space <- round(range_best/20*length(genders_selected()))
+    n_bests <- nrow(olympic_bests())
+    nudge = append(rep(-1, n_bests %% 2), rep(c(-1,1), n_bests %/% 2))
     p <- olympic_bests() %>% 
-      mutate(display_name = if_else(is_or == "Yes", family_name, "")) %>%
+      mutate(display_name = if_else(is_or, family_name, "")) %>%
       ggplot(aes(x = year, y = time, label = display_name)) + 
       geom_line() + 
-      geom_point(mapping = aes(color = is_or)) +
-      scale_x_continuous(breaks = seq(1900,2100,8)) +
-      scale_y_continuous(breaks = 
-                           seq(0, 2000, 
-                               round(range_best/30*length(genders_selected())))) +
+      geom_label_repel(direction = "y", nudge_y = nudge*y_tick_space) + 
+      geom_point(mapping = aes(color = is_or), size = 2) +
+      geom_label_repel(direction = "y", nudge_y = nudge*y_tick_space, segment.size = 0) + 
+      scale_x_continuous(breaks = seq(1904,2100,8)) +
+      scale_y_continuous(breaks = seq(0, 2000, y_tick_space), labels = axis_time) +
+      scale_color_manual(values=c("#375a7f","#00bc8c")) + 
       theme_light() +
-      scale_color_manual(values=c("#375a7f","#00bc8c")) +
-      labs(x = "Year", y = "Olympic Best Time (s)", color = "Olympic Record") +
-      geom_label_repel(size = 3, force = 10) + 
-      theme(legend.position = "none")
+      theme(legend.position = "none", strip.background = element_rect(fill="#303030")) + 
+      labs(x = "Year", y = "Olympic Best Time")
     
     # Both genders -> vertical faceting
     if(length(genders_selected()) > 1){
@@ -297,9 +369,10 @@ server <- function(input, output, session) {
     p
   })
   
+  # Men's olympic record table
   output$orecord_table_men <- renderTable(expr = {
     olympic_bests() %>%
-      filter(is_or == "Yes", gender == "Men") %>%
+      filter(is_or, gender == "Men") %>%
       arrange(desc(year)) %>% 
       mutate(name = tools::toTitleCase(paste(first_name,
                           tolower(family_name)))) %>%
@@ -307,9 +380,10 @@ server <- function(input, output, session) {
   }, 
   bordered = TRUE, hover = TRUE)
   
+  # Women's olympic record table
   output$orecord_table_women <- renderTable(expr = {
     olympic_bests() %>%
-      filter(is_or == "Yes", gender == "Women") %>%
+      filter(is_or, gender == "Women") %>%
       arrange(desc(year)) %>% 
       mutate(name = tools::toTitleCase(paste(first_name,
                                              tolower(family_name)))) %>%
@@ -317,25 +391,7 @@ server <- function(input, output, session) {
   }, 
   bordered = TRUE, hover = TRUE)
   
-  output$warning <- renderText({
-    warning_html <- ""
-    if((input$division %in% c("Women", "Both") && input$event == "1500 Freestyle") ||
-       (input$division %in% c("Men", "Both") && input$event == "800 Freestyle")){
-      warning_text <- paste("Historically, the longest men's distance ",
-                            "event at the Olympics has been the 1500m ",
-                            "Freestyle while the longest women's distance ",
-                            "event has been the 800m Freestyle. At Tokyo ",
-                            "in 2020 the Olympics will, for the first time, ",
-                            "have a Men's 800m Freestyle and a Women's 1500m",
-                            "Freestyle like other modern swim competitions.",
-                            sep = "")
-      warning_html <- paste("<p><font color=\"#F39C12\">",
-                            warning_text,
-                            "</font></p>")
-    }
-  warning_html
-  })
-  
 }
 
 shinyApp(ui = ui, server = server)
+
